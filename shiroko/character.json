@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "id": "shiroko",
+  "displayName": "砂狼白子",
+  "author": "OpenAI",
+  "version": "1.0.0",
+  "preview": "preview.png",
+  "defaultState": "idle",
+  "base": {
+    "width": 627,
+    "height": 627,
+    "scale": 1.0,
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "bubble": {
+    "offsetX": 0,
+    "offsetY": -180
+  },
+  "states": {
+    "idle": {
+      "path": "idle",
+      "fps": 8,
+      "loop": true
+    },
+    "talk": {
+      "path": "talk",
+      "fps": 12,
+      "loop": true
+    },
+    "think": {
+      "path": "think",
+      "fps": 6,
+      "loop": true
+    },
+    "sleep": {
+      "path": "sleep",
+      "fps": 4,
+      "loop": true
+    },
+    "happy": {
+      "path": "happy",
+      "fps": 10,
+      "loop": false,
+      "next": "idle"
+    },
+    "drag": {
+      "path": "drag",
+      "fps": 10,
+      "loop": true
+    },
+    "error": {
+      "path": "error",
+      "fps": 6,
+      "loop": false,
+      "next": "idle"
+    }
+  }
+}
