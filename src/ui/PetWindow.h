@@ -24,13 +24,18 @@ protected:
 private:
     void loadInitialImage();
     void addStateTestActions(QMenu *menu);
-    void playState(const QString &stateName, bool centerWindow);
+    void playState(const QString &stateName, bool centerWindow, bool autoReturn = false);
     void advanceStateFrame();
+    void scheduleIdleBehavior();
+    void playIdleBehavior();
+    void returnToIdleFromBehavior();
     void setDisplayImage(const QString &imagePath, bool centerWindow);
     void setAlwaysOnTop(bool enabled);
 
     QLabel *m_imageLabel;
     QTimer m_animationTimer;
+    QTimer m_idleBehaviorTimer;
+    QTimer m_behaviorReturnTimer;
     CharacterPackage m_characterPackage;
     QString m_currentStateName;
     QStringList m_currentFrames;

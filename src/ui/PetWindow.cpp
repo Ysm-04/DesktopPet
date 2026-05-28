@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QRandomGenerator>
 #include <QScreen>
 #include <QVBoxLayout>
 
@@ -46,6 +47,16 @@ PetWindow::PetWindow(QWidget *parent)
 
     connect(&m_animationTimer, &QTimer::timeout, this, [this]() {
         advanceStateFrame();
+    });
+
+    m_idleBehaviorTimer.setSingleShot(true);
+    connect(&m_idleBehaviorTimer, &QTimer::timeout, this, [this]() {
+        playIdleBehavior();
+    });
+
+    m_behaviorReturnTimer.setSingleShot(true);
+    connect(&m_behaviorReturnTimer, &QTimer::timeout, this, [this]() {
+        returnToIdleFromBehavior();
     });
 
     loadInitialImage();
@@ -158,7 +169,7 @@ void PetWindow::addStateTestActions(QMenu *menu)
     stateMenu->setEnabled(!stateMenu->actions().isEmpty());
 }
 
-void PetWindow::playState(const QString &stateName, bool centerWindow)
+void PetWindow::playState(const QString &stateName, bool centerWindow, bool autoReturn)
 {
     if (m_currentStateName == stateName && !m_currentFrames.isEmpty())
     {
@@ -171,6 +182,8 @@ void PetWindow::playState(const QString &stateName, bool centerWindow)
         return;
     }
 
+    m_idleBehaviorTimer.stop();
+    m_behaviorReturnTimer.stop();
     m_animationTimer.stop();
     m_currentStateName = stateName;
     m_currentFrames = state->framePaths;
@@ -180,6 +193,15 @@ void PetWindow::playState(const QString &stateName, bool centerWindow)
 
     const int intervalMs = qMax(1, 1000 / state->fps);
     m_animationTimer.start(intervalMs);
+
+    if (stateName == QStringLiteral("idle"))
+    {
+        scheduleIdleBehavior();
+    }
+    else if (autoReturn && state->loop)
+    {
+        m_behaviorReturnTimer.start(4000);
+    }
 }
 
 void PetWindow::advanceStateFrame()
@@ -220,6 +242,58 @@ void PetWindow::advanceStateFrame()
     }
 
     setDisplayImage(m_currentFrames.at(m_currentFrameIndex), false);
+}
+
+void PetWindow::scheduleIdleBehavior()
+{
+    if (!m_characterPackage.hasState(QStringLiteral("idle")))
+    {
+        return;
+    }
+
+    const int idleDelayMs = QRandomGenerator::global()->bounded(8000, 16001);
+    m_idleBehaviorTimer.start(idleDelayMs);
+}
+
+void PetWindow::playIdleBehavior()
+{
+    if (m_dragging || m_currentStateName != QStringLiteral("idle"))
+    {
+        scheduleIdleBehavior();
+        return;
+    }
+
+    QStringList candidateStates;
+    const QStringList preferredStates = {
+        QStringLiteral("think"),
+        QStringLiteral("sleep"),
+        QStringLiteral("happy"),
+    };
+
+    for (const QString &stateName : preferredStates)
+    {
+        if (m_characterPackage.hasState(stateName))
+        {
+            candidateStates.append(stateName);
+        }
+    }
+
+    if (candidateStates.isEmpty())
+    {
+        scheduleIdleBehavior();
+        return;
+    }
+
+    const int stateIndex = QRandomGenerator::global()->bounded(candidateStates.size());
+    playState(candidateStates.at(stateIndex), false, true);
+}
+
+void PetWindow::returnToIdleFromBehavior()
+{
+    if (!m_dragging)
+    {
+        playState(QStringLiteral("idle"), false);
+    }
 }
 
 void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)
