@@ -45,7 +45,7 @@ PetWindow::PetWindow(QWidget *parent)
     layout->addWidget(m_imageLabel);
 
     connect(&m_animationTimer, &QTimer::timeout, this, [this]() {
-        advanceIdleFrame();
+        advanceStateFrame();
     });
 
     loadInitialImage();
@@ -91,6 +91,7 @@ void PetWindow::mousePressEvent(QMouseEvent *event)
     {
         m_dragging = true;
         m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        playState(QStringLiteral("drag"), false);
         event->accept();
         return;
     }
@@ -103,6 +104,7 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton)
     {
         m_dragging = false;
+        playState(QStringLiteral("idle"), false);
         event->accept();
         return;
     }
@@ -113,39 +115,78 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
 void PetWindow::loadInitialImage()
 {
     QString loadError;
-    const CharacterPackage package = CharacterPackageLoader::load(characterPackagePath(), &loadError);
-    const CharacterState *idleState = package.state(QStringLiteral("idle"));
-    if (idleState != nullptr && !idleState->framePaths.isEmpty())
+    m_characterPackage = CharacterPackageLoader::load(characterPackagePath(), &loadError);
+    if (m_characterPackage.hasState(QStringLiteral("idle")))
     {
-        startIdleAnimation(*idleState);
+        playState(QStringLiteral("idle"), true);
         return;
     }
 
     setDisplayImage(previewImagePath(), true);
 }
 
-void PetWindow::startIdleAnimation(const CharacterState &idleState)
+void PetWindow::playState(const QString &stateName, bool centerWindow)
 {
+    if (m_currentStateName == stateName && !m_currentFrames.isEmpty())
+    {
+        return;
+    }
+
+    const CharacterState *state = m_characterPackage.state(stateName);
+    if (state == nullptr || state->framePaths.isEmpty() || state->fps <= 0)
+    {
+        return;
+    }
+
     m_animationTimer.stop();
-    m_idleFrames = idleState.framePaths;
+    m_currentStateName = stateName;
+    m_currentFrames = state->framePaths;
     m_currentFrameIndex = 0;
 
-    setDisplayImage(m_idleFrames.at(m_currentFrameIndex), true);
+    setDisplayImage(m_currentFrames.at(m_currentFrameIndex), centerWindow);
 
-    const int intervalMs = qMax(1, 1000 / idleState.fps);
+    const int intervalMs = qMax(1, 1000 / state->fps);
     m_animationTimer.start(intervalMs);
 }
 
-void PetWindow::advanceIdleFrame()
+void PetWindow::advanceStateFrame()
 {
-    if (m_idleFrames.isEmpty())
+    if (m_currentFrames.isEmpty())
     {
         m_animationTimer.stop();
         return;
     }
 
-    m_currentFrameIndex = (m_currentFrameIndex + 1) % m_idleFrames.size();
-    setDisplayImage(m_idleFrames.at(m_currentFrameIndex), false);
+    const CharacterState *state = m_characterPackage.state(m_currentStateName);
+    if (state == nullptr)
+    {
+        m_animationTimer.stop();
+        return;
+    }
+
+    if (m_currentFrameIndex + 1 >= m_currentFrames.size())
+    {
+        if (state->loop)
+        {
+            m_currentFrameIndex = 0;
+        }
+        else if (!state->nextState.isEmpty())
+        {
+            playState(state->nextState, false);
+            return;
+        }
+        else
+        {
+            m_animationTimer.stop();
+            return;
+        }
+    }
+    else
+    {
+        ++m_currentFrameIndex;
+    }
+
+    setDisplayImage(m_currentFrames.at(m_currentFrameIndex), false);
 }
 
 void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)

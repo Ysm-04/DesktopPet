@@ -1,12 +1,12 @@
 #pragma once
 
+#include "../character/CharacterPackage.h"
+
 #include <QLabel>
 #include <QPoint>
 #include <QStringList>
 #include <QTimer>
 #include <QWidget>
-
-struct CharacterState;
 
 class PetWindow : public QWidget
 {
@@ -21,14 +21,16 @@ protected:
 
 private:
     void loadInitialImage();
-    void startIdleAnimation(const CharacterState &idleState);
-    void advanceIdleFrame();
+    void playState(const QString &stateName, bool centerWindow);
+    void advanceStateFrame();
     void setDisplayImage(const QString &imagePath, bool centerWindow);
     void setAlwaysOnTop(bool enabled);
 
     QLabel *m_imageLabel;
     QTimer m_animationTimer;
-    QStringList m_idleFrames;
+    CharacterPackage m_characterPackage;
+    QString m_currentStateName;
+    QStringList m_currentFrames;
     QPoint m_dragOffset;
     int m_currentFrameIndex;
     bool m_dragging;
