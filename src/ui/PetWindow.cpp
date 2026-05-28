@@ -29,6 +29,7 @@ QString previewImagePath()
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
     , m_imageLabel(new QLabel(this))
+    , m_currentFrameIndex(0)
     , m_dragging(false)
     , m_alwaysOnTop(true)
 {
@@ -42,6 +43,10 @@ PetWindow::PetWindow(QWidget *parent)
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_imageLabel);
+
+    connect(&m_animationTimer, &QTimer::timeout, this, [this]() {
+        advanceIdleFrame();
+    });
 
     loadInitialImage();
 }
@@ -112,14 +117,38 @@ void PetWindow::loadInitialImage()
     const CharacterState *idleState = package.state(QStringLiteral("idle"));
     if (idleState != nullptr && !idleState->framePaths.isEmpty())
     {
-        setDisplayImage(idleState->framePaths.first());
+        startIdleAnimation(*idleState);
         return;
     }
 
-    setDisplayImage(previewImagePath());
+    setDisplayImage(previewImagePath(), true);
 }
 
-void PetWindow::setDisplayImage(const QString &imagePath)
+void PetWindow::startIdleAnimation(const CharacterState &idleState)
+{
+    m_animationTimer.stop();
+    m_idleFrames = idleState.framePaths;
+    m_currentFrameIndex = 0;
+
+    setDisplayImage(m_idleFrames.at(m_currentFrameIndex), true);
+
+    const int intervalMs = qMax(1, 1000 / idleState.fps);
+    m_animationTimer.start(intervalMs);
+}
+
+void PetWindow::advanceIdleFrame()
+{
+    if (m_idleFrames.isEmpty())
+    {
+        m_animationTimer.stop();
+        return;
+    }
+
+    m_currentFrameIndex = (m_currentFrameIndex + 1) % m_idleFrames.size();
+    setDisplayImage(m_idleFrames.at(m_currentFrameIndex), false);
+}
+
+void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)
 {
     QPixmap pixmap(imagePath);
     if (pixmap.isNull())
@@ -134,10 +163,13 @@ void PetWindow::setDisplayImage(const QString &imagePath)
     m_imageLabel->setPixmap(scaled);
     resize(scaled.size());
 
-    if (const QScreen *screen = QGuiApplication::primaryScreen())
+    if (centerWindow)
     {
-        const QRect available = screen->availableGeometry();
-        move(available.center() - rect().center());
+        if (const QScreen *screen = QGuiApplication::primaryScreen())
+        {
+            const QRect available = screen->availableGeometry();
+            move(available.center() - rect().center());
+        }
     }
 }
 
