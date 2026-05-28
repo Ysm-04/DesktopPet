@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QWidget>
 
+class QMenu;
+
 class PetWindow : public QWidget
 {
 public:
@@ -21,6 +23,7 @@ protected:
 
 private:
     void loadInitialImage();
+    void addStateTestActions(QMenu *menu);
     void playState(const QString &stateName, bool centerWindow);
     void advanceStateFrame();
     void setDisplayImage(const QString &imagePath, bool centerWindow);

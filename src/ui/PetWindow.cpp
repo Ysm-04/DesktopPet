@@ -59,6 +59,8 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     topAction->setCheckable(true);
     topAction->setChecked(m_alwaysOnTop);
 
+    addStateTestActions(&menu);
+
     menu.addSeparator();
     QAction *exitAction = menu.addAction(QStringLiteral("退出"));
 
@@ -70,6 +72,10 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     else if (selectedAction == exitAction)
     {
         close();
+    }
+    else if (selectedAction != nullptr && selectedAction->data().isValid())
+    {
+        playState(selectedAction->data().toString(), false);
     }
 }
 
@@ -123,6 +129,33 @@ void PetWindow::loadInitialImage()
     }
 
     setDisplayImage(previewImagePath(), true);
+}
+
+void PetWindow::addStateTestActions(QMenu *menu)
+{
+    QMenu *stateMenu = menu->addMenu(QStringLiteral("State Test"));
+    const QStringList stateNames = {
+        QStringLiteral("idle"),
+        QStringLiteral("talk"),
+        QStringLiteral("think"),
+        QStringLiteral("sleep"),
+        QStringLiteral("happy"),
+        QStringLiteral("error"),
+        QStringLiteral("drag"),
+    };
+
+    for (const QString &stateName : stateNames)
+    {
+        if (!m_characterPackage.hasState(stateName))
+        {
+            continue;
+        }
+
+        QAction *stateAction = stateMenu->addAction(stateName);
+        stateAction->setData(stateName);
+    }
+
+    stateMenu->setEnabled(!stateMenu->actions().isEmpty());
 }
 
 void PetWindow::playState(const QString &stateName, bool centerWindow)
