@@ -1,5 +1,7 @@
 #include "PetWindow.h"
 
+#include "../character/CharacterPackageLoader.h"
+
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QCursor>
@@ -13,6 +15,11 @@
 
 namespace
 {
+QString characterPackagePath()
+{
+    return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko");
+}
+
 QString previewImagePath()
 {
     return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko/preview.png");
@@ -36,7 +43,7 @@ PetWindow::PetWindow(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_imageLabel);
 
-    loadPreviewImage();
+    loadInitialImage();
 }
 
 void PetWindow::contextMenuEvent(QContextMenuEvent *event)
@@ -98,9 +105,22 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
     QWidget::mouseReleaseEvent(event);
 }
 
-void PetWindow::loadPreviewImage()
+void PetWindow::loadInitialImage()
 {
-    const QString imagePath = previewImagePath();
+    QString loadError;
+    const CharacterPackage package = CharacterPackageLoader::load(characterPackagePath(), &loadError);
+    const CharacterState *idleState = package.state(QStringLiteral("idle"));
+    if (idleState != nullptr && !idleState->framePaths.isEmpty())
+    {
+        setDisplayImage(idleState->framePaths.first());
+        return;
+    }
+
+    setDisplayImage(previewImagePath());
+}
+
+void PetWindow::setDisplayImage(const QString &imagePath)
+{
     QPixmap pixmap(imagePath);
     if (pixmap.isNull())
     {
@@ -138,4 +158,3 @@ void PetWindow::setAlwaysOnTop(bool enabled)
     setWindowFlags(flags);
     show();
 }
-

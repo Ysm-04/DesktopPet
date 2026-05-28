@@ -14,6 +14,10 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 qt_add_executable(QtDesktopPet
     main.cpp
+    src/character/CharacterPackage.h
+    src/character/CharacterPackage.cpp
+    src/character/CharacterPackageLoader.h
+    src/character/CharacterPackageLoader.cpp
     src/ui/PetWindow.h
     src/ui/PetWindow.cpp
 )

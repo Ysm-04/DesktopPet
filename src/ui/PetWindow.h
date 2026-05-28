@@ -16,7 +16,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
-    void loadPreviewImage();
+    void loadInitialImage();
+    void setDisplayImage(const QString &imagePath);
     void setAlwaysOnTop(bool enabled);
 
     QLabel *m_imageLabel;
