@@ -3,12 +3,12 @@
   "id": "shiroko",
   "displayName": "砂狼白子",
   "author": "OpenAI",
-  "version": "1.0.0",
+  "version": "2.1.0-stable",
   "preview": "preview.png",
   "defaultState": "idle",
   "base": {
-    "width": 627,
-    "height": 627,
+    "width": 512,
+    "height": 512,
     "scale": 1.0,
     "anchorX": 0.5,
     "anchorY": 1.0
@@ -20,17 +20,17 @@
   "states": {
     "idle": {
       "path": "idle",
-      "fps": 8,
+      "fps": 9,
       "loop": true
     },
     "talk": {
       "path": "talk",
-      "fps": 12,
+      "fps": 8,
       "loop": true
     },
     "think": {
       "path": "think",
-      "fps": 6,
+      "fps": 8,
       "loop": true
     },
     "sleep": {
@@ -38,16 +38,16 @@
       "fps": 4,
       "loop": true
     },
-    "happy": {
-      "path": "happy",
-      "fps": 10,
-      "loop": false,
-      "next": "idle"
-    },
     "drag": {
       "path": "drag",
-      "fps": 10,
+      "fps": 12,
       "loop": true
+    },
+    "happy": {
+      "path": "happy",
+      "fps": 8,
+      "loop": false,
+      "next": "idle"
     },
     "error": {
       "path": "error",

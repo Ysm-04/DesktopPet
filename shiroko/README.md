@@ -1,11 +1,7 @@
-# 砂狼白子角色包
+# 砂狼白子角色包 v2.1.0-stable
 
-目录结构遵循之前约定的桌宠角色包格式：
-- preview.png
-- character.json
-- idle/ talk/ think/ sleep/ happy/ drag/ error
+按动画素材规范重新整理：所有帧均为 512x512 透明画布，未裁切角色本体；帧编号连续。
 
-说明：
-- 每个状态包含 4 帧 PNG
-- 资源用于桌宠演示与原型验证
-- character.json 已配置默认帧率和状态切换
+帧数：idle 30，talk 30，think 30，sleep 30，drag 30，happy 20，error 20。
+
+说明：本版采用稳定坐标系与关键帧扩展方式生成，用于动画调试和桌宠加载器测试。
