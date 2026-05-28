@@ -2,6 +2,14 @@
 
 本文档用于把 `Qt_DesktopPet_开发文档.md` 中的总体目标拆成可执行阶段。
 
+说明：
+
+```text
+1. Qt_DesktopPet_开发文档.md 是项目总纲，定义长期目标、模块职责和整体约束
+2. 本文档是当前实际开发顺序，会在不违背总纲的前提下进一步拆小阶段
+3. 如果两份文档的阶段编号不同，以本文档作为当前执行计划
+```
+
 总原则：
 
 ```text
@@ -203,12 +211,12 @@ shiroko/
 
 ---
 
-## 6. 阶段 2：接入 shiroko 角色包与 idle 动画
+## 6. 阶段 2A：角色包最小读取
 
 目标：
 
 ```text
-把单图显示升级为角色包驱动的 PNG 帧动画。
+先把 shiroko 角色包作为结构化数据读进程序，暂不播放动画。
 ```
 
 只做：
@@ -216,12 +224,14 @@ shiroko/
 ```text
 1. CharacterPackage
 2. CharacterPackageLoader
-3. AnimationClip
-4. FrameAnimator
-5. 读取 shiroko/character.json
-6. 加载 idle 状态帧
-7. 按 fps 播放 idle 动画
-8. 启动失败时回退 preview.png 或内置占位图
+3. 读取 shiroko/character.json
+4. 校验 schemaVersion
+5. 校验 defaultState
+6. 校验 states
+7. 读取 idle 状态配置
+8. 收集 idle 帧路径
+9. PetWindow 显示 idle 第一帧
+10. 加载失败时回退 preview.png 或内置占位图
 ```
 
 暂不做：
@@ -229,23 +239,69 @@ shiroko/
 ```text
 1. 多角色切换
 2. 角色导入界面
-3. 完整状态机
+3. AnimationClip
+4. FrameAnimator
+5. QTimer 帧动画
+6. 完整状态机
+7. AI 联动
+```
+
+验收标准：
+
+```text
+1. 能读取 shiroko/character.json
+2. 能获取 idle 状态帧路径列表
+3. 能显示 idle 第一帧
+4. 不在 paintEvent 中加载图片
+5. character.json 缺失或损坏时程序不崩溃
+6. idle 状态缺失时程序不崩溃
+```
+
+---
+
+## 7. 阶段 2B：idle 帧动画
+
+目标：
+
+```text
+在角色包读取稳定后，把 idle 第一帧显示升级为按 FPS 播放 PNG 序列帧。
+```
+
+只做：
+
+```text
+1. AnimationClip
+2. FrameAnimator
+3. 使用 QTimer 按 idle fps 播放帧
+4. 启动时预加载 idle 帧到内存
+5. loop=true 时循环播放
+6. 仍然只播放 idle 状态
+```
+
+暂不做：
+
+```text
+1. 多状态切换
+2. 状态机
+3. 托盘隐藏暂停
 4. AI 联动
+5. 角色切换
 ```
 
 验收标准：
 
 ```text
 1. idle 动画正常播放
-2. 不在 paintEvent 中加载图片
+2. fps 使用 character.json 配置
 3. 不每帧读取硬盘
-4. fps 使用 character.json 配置
-5. character.json 缺失或损坏时程序不崩溃
+4. 不在 paintEvent 中加载图片
+5. QTimer 间隔不低于 character.json 推导值
+6. 图片加载失败时跳过坏帧或回退 preview.png
 ```
 
 ---
 
-## 7. 阶段 3：状态机与多状态动画
+## 8. 阶段 3：状态机与多状态动画
 
 目标：
 
@@ -285,7 +341,7 @@ shiroko/
 
 ---
 
-## 8. 阶段 4：托盘、配置、日志
+## 9. 阶段 4：托盘、配置、日志
 
 目标：
 
@@ -327,7 +383,7 @@ shiroko/
 
 ---
 
-## 9. 阶段 5：稳定性与性能检查
+## 10. 阶段 5：稳定性与性能检查
 
 目标：
 
@@ -359,7 +415,7 @@ shiroko/
 
 ---
 
-## 10. 阶段 6：AI 接入
+## 11. 阶段 6：AI 接入
 
 目标：
 
@@ -408,7 +464,7 @@ shiroko/
 
 ---
 
-## 11. 阶段 7：UI 优化与收尾
+## 12. 阶段 7：UI 优化与收尾
 
 目标：
 
@@ -448,7 +504,7 @@ shiroko/
 
 ---
 
-## 12. 当前未决问题
+## 13. 当前未决问题
 
 后续开始写代码前，需要逐项确认：
 
@@ -461,4 +517,3 @@ shiroko/
 6. 是否将 build/、.vs/、CMake 生成目录全部加入 .gitignore
 7. shiroko 素材是否允许提交到远程仓库
 ```
-
