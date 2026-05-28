@@ -1,0 +1,25 @@
+build/
+cmake-build-*/
+.vs/
+.vscode/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.autosave
+
+# Build outputs
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.lib
+
+# Runtime/config files generated during development
+config/
+logs/
+*.broken.json
+
