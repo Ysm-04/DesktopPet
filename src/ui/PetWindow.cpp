@@ -1,17 +1,20 @@
 #include "PetWindow.h"
 
 #include "../character/CharacterPackageLoader.h"
+#include "../util/Logger.h"
+#include "PetView.h"
 
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QCursor>
-#include <QFileInfo>
 #include <QGuiApplication>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
 #include <QRandomGenerator>
 #include <QScreen>
+#include <QSet>
+#include <QStringList>
 #include <QVBoxLayout>
 
 namespace
@@ -29,24 +32,26 @@ QString previewImagePath()
 
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
-    , m_imageLabel(new QLabel(this))
-    , m_currentFrameIndex(0)
+    , m_petView(new PetView(this))
     , m_dragging(false)
     , m_alwaysOnTop(true)
+    , m_centerNextFrame(false)
 {
     setAttribute(Qt::WA_TranslucentBackground);
     setWindowFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
     setMouseTracking(true);
 
-    m_imageLabel->setAlignment(Qt::AlignCenter);
-    m_imageLabel->setAttribute(Qt::WA_TranslucentBackground);
-
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(m_imageLabel);
+    layout->addWidget(m_petView);
 
-    connect(&m_animationTimer, &QTimer::timeout, this, [this]() {
-        advanceStateFrame();
+    m_frameAnimator.setFrameChangedCallback([this](const QPixmap &pixmap) {
+        setDisplayPixmap(pixmap, m_centerNextFrame);
+        m_centerNextFrame = false;
+    });
+
+    m_frameAnimator.setClipFinishedCallback([this](const QString &nextState) {
+        playResolvedState(m_stateMachine.finishState(nextState), false);
     });
 
     m_idleBehaviorTimer.setSingleShot(true);
@@ -60,6 +65,49 @@ PetWindow::PetWindow(QWidget *parent)
     });
 
     loadInitialImage();
+}
+
+void PetWindow::applyAppConfig(const AppConfig &config)
+{
+    setAlwaysOnTop(config.alwaysOnTop);
+
+    if (config.hasWindowPosition && isPointVisibleOnScreen(config.windowPosition))
+    {
+        move(config.windowPosition);
+    }
+}
+
+AppConfig PetWindow::currentAppConfig() const
+{
+    AppConfig config;
+    config.windowPosition = pos();
+    config.hasWindowPosition = true;
+    config.alwaysOnTop = m_alwaysOnTop;
+    return config;
+}
+
+void PetWindow::pauseAnimation()
+{
+    m_returnToIdleAfterResume = m_behaviorReturnTimer.isActive();
+    m_idleBehaviorTimer.stop();
+    m_behaviorReturnTimer.stop();
+    m_frameAnimator.pause();
+}
+
+void PetWindow::resumeAnimation()
+{
+    m_frameAnimator.resume();
+
+    if (m_stateMachine.currentState() == QStringLiteral("idle"))
+    {
+        scheduleIdleBehavior();
+    }
+    else if (m_returnToIdleAfterResume)
+    {
+        m_behaviorReturnTimer.start(4000);
+    }
+
+    m_returnToIdleAfterResume = false;
 }
 
 void PetWindow::contextMenuEvent(QContextMenuEvent *event)
@@ -108,7 +156,7 @@ void PetWindow::mousePressEvent(QMouseEvent *event)
     {
         m_dragging = true;
         m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
-        playState(QStringLiteral("drag"), false);
+        playResolvedState(m_stateMachine.beginDrag(), false);
         event->accept();
         return;
     }
@@ -121,7 +169,7 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton)
     {
         m_dragging = false;
-        playState(QStringLiteral("idle"), false);
+        playResolvedState(m_stateMachine.endDrag(), false);
         event->accept();
         return;
     }
@@ -133,13 +181,41 @@ void PetWindow::loadInitialImage()
 {
     QString loadError;
     m_characterPackage = CharacterPackageLoader::load(characterPackagePath(), &loadError);
-    if (m_characterPackage.hasState(QStringLiteral("idle")))
+    if (!loadError.isEmpty())
     {
-        playState(QStringLiteral("idle"), true);
+        Logger::warning(QStringLiteral("Character package load failed: ") + loadError);
+    }
+
+    buildAnimationClips();
+
+    if (m_clips.contains(QStringLiteral("idle")))
+    {
+        playResolvedState(m_stateMachine.start(), true);
         return;
     }
 
     setDisplayImage(previewImagePath(), true);
+}
+
+void PetWindow::buildAnimationClips()
+{
+    m_clips.clear();
+
+    QSet<QString> availableStates;
+    const QSize targetSize(320, 320);
+    for (auto iterator = m_characterPackage.states.constBegin(); iterator != m_characterPackage.states.constEnd(); ++iterator)
+    {
+        AnimationClip clip = AnimationClip::fromState(iterator.value(), targetSize);
+        if (!clip.isValid())
+        {
+            continue;
+        }
+
+        availableStates.insert(iterator.key());
+        m_clips.insert(iterator.key(), clip);
+    }
+
+    m_stateMachine.setAvailableStates(availableStates);
 }
 
 void PetWindow::addStateTestActions(QMenu *menu)
@@ -157,7 +233,7 @@ void PetWindow::addStateTestActions(QMenu *menu)
 
     for (const QString &stateName : stateNames)
     {
-        if (!m_characterPackage.hasState(stateName))
+        if (!m_clips.contains(stateName))
         {
             continue;
         }
@@ -169,84 +245,48 @@ void PetWindow::addStateTestActions(QMenu *menu)
     stateMenu->setEnabled(!stateMenu->actions().isEmpty());
 }
 
-void PetWindow::playState(const QString &stateName, bool centerWindow, bool autoReturn)
+void PetWindow::playState(const QString &stateName, bool centerWindow)
 {
-    if (m_currentStateName == stateName && !m_currentFrames.isEmpty())
+    playResolvedState(m_stateMachine.requestState(stateName), centerWindow);
+}
+
+void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
+{
+    if (stateName.isEmpty())
     {
         return;
     }
 
-    const CharacterState *state = m_characterPackage.state(stateName);
-    if (state == nullptr || state->framePaths.isEmpty() || state->fps <= 0)
+    if (m_frameAnimator.currentStateName() == stateName && m_frameAnimator.isPlaying())
     {
         return;
     }
 
+    auto clipIterator = m_clips.constFind(stateName);
+    if (clipIterator == m_clips.constEnd())
+    {
+        return;
+    }
+
+    const AnimationClip *clip = &clipIterator.value();
     m_idleBehaviorTimer.stop();
     m_behaviorReturnTimer.stop();
-    m_animationTimer.stop();
-    m_currentStateName = stateName;
-    m_currentFrames = state->framePaths;
-    m_currentFrameIndex = 0;
-
-    setDisplayImage(m_currentFrames.at(m_currentFrameIndex), centerWindow);
-
-    const int intervalMs = qMax(1, 1000 / state->fps);
-    m_animationTimer.start(intervalMs);
+    m_centerNextFrame = centerWindow;
+    m_frameAnimator.play(clip);
 
     if (stateName == QStringLiteral("idle"))
     {
         scheduleIdleBehavior();
     }
-    else if (autoReturn && state->loop)
+    else if (clip->loop)
     {
         m_behaviorReturnTimer.start(4000);
     }
 }
 
-void PetWindow::advanceStateFrame()
-{
-    if (m_currentFrames.isEmpty())
-    {
-        m_animationTimer.stop();
-        return;
-    }
-
-    const CharacterState *state = m_characterPackage.state(m_currentStateName);
-    if (state == nullptr)
-    {
-        m_animationTimer.stop();
-        return;
-    }
-
-    if (m_currentFrameIndex + 1 >= m_currentFrames.size())
-    {
-        if (state->loop)
-        {
-            m_currentFrameIndex = 0;
-        }
-        else if (!state->nextState.isEmpty())
-        {
-            playState(state->nextState, false);
-            return;
-        }
-        else
-        {
-            m_animationTimer.stop();
-            return;
-        }
-    }
-    else
-    {
-        ++m_currentFrameIndex;
-    }
-
-    setDisplayImage(m_currentFrames.at(m_currentFrameIndex), false);
-}
-
 void PetWindow::scheduleIdleBehavior()
 {
-    if (!m_characterPackage.hasState(QStringLiteral("idle")))
+    if (!m_clips.contains(QStringLiteral("idle")))
     {
         return;
     }
@@ -257,7 +297,7 @@ void PetWindow::scheduleIdleBehavior()
 
 void PetWindow::playIdleBehavior()
 {
-    if (m_dragging || m_currentStateName != QStringLiteral("idle"))
+    if (m_dragging || m_stateMachine.currentState() != QStringLiteral("idle"))
     {
         scheduleIdleBehavior();
         return;
@@ -272,7 +312,7 @@ void PetWindow::playIdleBehavior()
 
     for (const QString &stateName : preferredStates)
     {
-        if (m_characterPackage.hasState(stateName))
+        if (m_clips.contains(stateName))
         {
             candidateStates.append(stateName);
         }
@@ -285,14 +325,14 @@ void PetWindow::playIdleBehavior()
     }
 
     const int stateIndex = QRandomGenerator::global()->bounded(candidateStates.size());
-    playState(candidateStates.at(stateIndex), false, true);
+    playResolvedState(m_stateMachine.requestState(candidateStates.at(stateIndex), StateRequestSource::Automatic), false);
 }
 
 void PetWindow::returnToIdleFromBehavior()
 {
     if (!m_dragging)
     {
-        playState(QStringLiteral("idle"), false);
+        playResolvedState(m_stateMachine.finishState(QStringLiteral("idle")), false);
     }
 }
 
@@ -301,15 +341,20 @@ void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)
     QPixmap pixmap(imagePath);
     if (pixmap.isNull())
     {
-        m_imageLabel->setText(QStringLiteral("QtDesktopPet"));
+        m_petView->showFallbackText(QStringLiteral("QtDesktopPet"));
         resize(240, 160);
         return;
     }
 
     const QSize targetSize(320, 320);
     const QPixmap scaled = pixmap.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    m_imageLabel->setPixmap(scaled);
-    resize(scaled.size());
+    setDisplayPixmap(scaled, centerWindow);
+}
+
+void PetWindow::setDisplayPixmap(const QPixmap &pixmap, bool centerWindow)
+{
+    m_petView->setFrame(pixmap);
+    resize(pixmap.size());
 
     if (centerWindow)
     {
@@ -321,9 +366,24 @@ void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)
     }
 }
 
+bool PetWindow::isPointVisibleOnScreen(const QPoint &point) const
+{
+    const QList<QScreen *> screens = QGuiApplication::screens();
+    for (const QScreen *screen : screens)
+    {
+        if (screen != nullptr && screen->availableGeometry().contains(point))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void PetWindow::setAlwaysOnTop(bool enabled)
 {
     m_alwaysOnTop = enabled;
+    const bool wasVisible = isVisible();
 
     Qt::WindowFlags flags = windowFlags();
     if (enabled)
@@ -336,5 +396,8 @@ void PetWindow::setAlwaysOnTop(bool enabled)
     }
 
     setWindowFlags(flags);
-    show();
+    if (wasVisible)
+    {
+        show();
+    }
 }

@@ -14,12 +14,27 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
 qt_add_executable(QtDesktopPet
     main.cpp
+    src/character/AnimationClip.h
+    src/character/AnimationClip.cpp
     src/character/CharacterPackage.h
     src/character/CharacterPackage.cpp
     src/character/CharacterPackageLoader.h
     src/character/CharacterPackageLoader.cpp
+    src/character/FrameAnimator.h
+    src/character/FrameAnimator.cpp
+    src/config/AppConfig.h
+    src/config/ConfigManager.h
+    src/config/ConfigManager.cpp
+    src/state/PetStateMachine.h
+    src/state/PetStateMachine.cpp
+    src/tray/TrayController.h
+    src/tray/TrayController.cpp
+    src/ui/PetView.h
+    src/ui/PetView.cpp
     src/ui/PetWindow.h
     src/ui/PetWindow.cpp
+    src/util/Logger.h
+    src/util/Logger.cpp
 )
 
 target_compile_definitions(QtDesktopPet

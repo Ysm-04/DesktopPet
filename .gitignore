@@ -19,7 +19,6 @@ cmake-build-*/
 *.lib
 
 # Runtime/config files generated during development
-config/
-logs/
+/config/
+/logs/
 *.broken.json
-

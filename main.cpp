@@ -1,6 +1,11 @@
 #include <QApplication>
+#include <QCoreApplication>
+#include <QObject>
 
+#include "src/config/ConfigManager.h"
+#include "src/tray/TrayController.h"
 #include "src/ui/PetWindow.h"
+#include "src/util/Logger.h"
 
 int main(int argc, char *argv[])
 {
@@ -8,9 +13,25 @@ int main(int argc, char *argv[])
     QApplication::setApplicationName("QtDesktopPet");
     QApplication::setOrganizationName("QtDesktopPet");
 
+    Logger::info(QStringLiteral("Application started."));
+
+    ConfigManager configManager;
     PetWindow window;
+    window.applyAppConfig(configManager.loadAppConfig());
+
+    TrayController trayController(&window);
+    trayController.show();
+
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [&configManager, &window]() {
+        if (!configManager.saveAppConfig(window.currentAppConfig()))
+        {
+            Logger::warning(QStringLiteral("Failed to save app config."));
+        }
+
+        Logger::info(QStringLiteral("Application is exiting."));
+    });
+
     window.show();
 
     return app.exec();
 }
-
