@@ -1653,7 +1653,7 @@ README 至少说明：
 
 ## 25. 当前版本总结
 
-当前版本只做桌宠内核。
+当前版本已经从桌宠内核推进到最小 AI 对话闭环。
 
 核心是：
 
@@ -1664,6 +1664,10 @@ PNG 多状态帧动画角色包
 轻量状态机
 OpenAI Compatible 自定义 AI 接口
 AI 对话与桌宠动画联动
+SSE 流式输出
+聊天输入框、回复气泡和对话历史面板
+按 Provider 分组保存 AI 配置
+Windows DPAPI 加密保存 API Key
 低资源占用
 MIT License 开源
 ```
@@ -1672,4 +1676,16 @@ MIT License 开源
 
 ```text
 先创建一个可运行、可对话、可换角色、资源占用低、后续容易扩展的 Qt 桌宠项目。
+```
+
+当前仍需补齐：
+
+```text
+1. 设置页内 AI 连通性测试
+2. Google / Claude 原生协议 Provider，或在 UI 中明确提示暂未接入
+3. 对话历史内存上限和可选持久化
+4. AppConfig 中缩放、性能模式等字段的实际应用
+5. character.json 中 base、anchor、bubble offset 的解析与应用
+6. 角色包位置整理、角色切换和懒加载策略
+7. 发布前素材授权确认与打包验证
 ```

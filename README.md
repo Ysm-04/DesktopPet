@@ -1,6 +1,6 @@
 # QtDesktopPet
 
-QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型项目。当前目标是先完成轻量桌宠内核：透明无边框窗口、PNG 序列帧动画、多状态切换、托盘隐藏、配置保存和基础日志。
+QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型项目。当前目标是完成一个轻量桌宠内核，并在此基础上接入用户自定义的大模型对话能力。
 
 ## 当前状态
 
@@ -17,14 +17,26 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 隐藏时暂停动画，显示时恢复动画
 - 保存窗口位置和置顶状态
 - 文件日志和基础轮转
+- 设置窗口
+- AI Provider 分组配置
+- Windows DPAPI 加密保存 API Key
+- 非 Windows 环境经用户确认后明文保存 API Key
+- OpenAI Compatible 聊天请求
+- SSE 流式输出
+- 聊天输入框
+- AI 回复气泡
+- 对话历史面板
+- AI 请求取消和对话清空
 
 尚未实现：
 
-- AI 对话
-- AI 配置界面
-- ChatBubble 气泡
-- SettingsDialog
+- Google / Claude 原生协议 Provider
+- 设置页内 AI 连通性测试
+- 缩放和性能模式 UI
+- AppConfig 中缩放 / 性能字段的实际应用
 - 角色导入/切换界面
+- 对话历史持久化
+- 角色包懒加载
 - 打包发布脚本
 
 ## 技术栈
@@ -118,26 +130,41 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 - 最多保留 3 个旧日志文件
 - 文件名为 `QtDesktopPet.log.1`、`QtDesktopPet.log.2`、`QtDesktopPet.log.3`
 
-## AI 计划
+## AI 配置和聊天
 
-项目计划支持 OpenAI Compatible API，但当前尚未接入 AI。
+当前正式聊天使用 OpenAI Compatible 协议。已提供以下 Provider 配置入口：
 
-后续目标：
+- OpenAI
+- Google
+- Claude
+- DeepSeek
+- Custom
+
+其中 OpenAI、DeepSeek、Custom 走 OpenAI Compatible 形式配置。Google 和 Claude 当前主要是配置预留，正式聊天运行时还未接入对应原生协议。
+
+已支持：
 
 - 用户自定义 Base URL
 - 用户自定义 API Key
 - 用户自定义 Model
-- 非流式对话请求
+- 用户自定义 Path
+- 超时、Temperature、Max Tokens
+- 流式输出
 - 请求中切换 `think`
-- 回复时切换 `talk`
+- 收到首段输出后切换并保持 `talk`
 - 失败时切换 `error`
 - API Key 不写入日志，不在错误提示中完整显示
+- 对话历史面板记录用户消息和 AI 最终回复
+
+AI 测试入口已从角色右键菜单移除，后续会放入设置页。
 
 ## 隐私说明
 
-当前版本没有 AI 网络请求。
+程序只会把用户消息发送到用户自己配置的接口。用户需要自行判断第三方代理、中转服务或自建服务是否可信。项目不会默认承诺第三方接口的隐私安全。
 
-后续接入 AI 后，程序只会把用户消息发送到用户自己配置的接口。用户需要自行判断第三方代理、中转服务或自建服务是否可信。项目不会默认承诺第三方接口的隐私安全。
+日志会记录请求诊断信息，例如 Provider、Base URL 主机、Path、HTTP 状态码、响应大小、错误摘要等；日志不应记录完整 API Key、Authorization Header 或完整消息正文。
+
+当前对话历史保存在内存中，请求上下文只截取最近部分历史。后续仍需要补充内存历史上限和可选持久化策略。
 
 ## 素材版权说明
 

@@ -522,10 +522,12 @@ error ：20 帧
 
 ```text
 1. 阶段 0 工程基础：
-   已有 .gitignore、CMakeLists.txt、main.cpp、src/、docs/、resources/ 等基础结构
+   已有 .gitignore、CMakeLists.txt、main.cpp、src/、docs/ 等基础结构
+   LICENSE 已采用 MIT，版权主体为 Make
 
 2. 阶段 1 最小桌宠窗口：
-   已实现透明无边框窗口、拖动、右键退出、置顶切换
+   已实现透明无边框窗口、拖动、右键菜单、置顶切换
+   已支持双击桌宠打开聊天输入框
 
 3. 阶段 2A 角色包最小读取：
    已有 CharacterPackage / CharacterPackageLoader
@@ -538,24 +540,45 @@ error ：20 帧
 5. 阶段 3 状态机初版：
    已新增 PetStateMachine
    已支持 idle / drag / think / talk / happy / sleep / error 的基础请求、拖动优先和缺失状态回退 idle
+   已补充流式聊天过程中的状态保持：等待首段回复时保持 think，输出期间保持 talk
 
-6. 阶段 4 基础设施的一部分：
+6. 阶段 4 基础设施：
    已新增 PetView，拆分显示职责
    已新增 TrayController，支持托盘显示、隐藏、退出
-   已新增 ConfigManager，保存窗口位置和置顶状态
+   已新增 ConfigManager，保存窗口位置、置顶状态和部分预留性能字段
    已新增 Logger，支持文件日志和基础轮转
+
+7. 阶段 5 稳定性与性能检查：
+   已做过一轮人工稳定性观察，包括静置、idle 动画、托盘隐藏/显示、重复状态切换和资源损坏兜底
+   当前尚未形成自动化性能测试或长期压测记录
+
+8. 阶段 6 AI 接入：
+   已新增 LLMProvider / OpenAICompatibleProvider / ConversationManager
+   已支持 OpenAI Compatible 异步请求、超时、取消、错误提示和网络诊断日志
+   已支持 SSE 流式输出，气泡中流式显示，历史面板只记录最终对话
+   已限制同一时间只允许一个 AI 请求
+   已避免在日志中输出完整 API Key 和完整消息正文
+
+9. 阶段 7 UI 基础优化：
+   已新增 ChatBubble、ChatInputDialog、ChatHistoryPanel、SettingsDialog
+   已支持右键聊天、显示对话、取消 AI 请求、清空对话、设置
+   已删除临时 AI 测试入口和气泡测试入口
+   已支持 OpenAI / Google / Claude / DeepSeek / Custom 配置分 Provider 保存
+   Windows 下 API Key 使用 DPAPI 加密保存，非 Windows 需用户确认后才允许明文保存
 ```
 
 当前实现与计划仍存在差异：
 
 ```text
 1. shiroko 角色包仍位于项目根目录 shiroko/，尚未移动到 resources/characters/shiroko
-2. 当前未实现 AI 接入、AI 配置界面和 ChatBubble
-3. 当前未实现 SettingsDialog
-4. 当前 ConfigManager 只保存窗口位置和置顶状态，尚未保存缩放、性能模式、角色选择
-5. 当前 Logger 只接入启动、退出、配置和角色包加载失败等低频日志
-6. 当前 FrameAnimator 采用当前角色包全部状态帧预加载，尚未做懒加载
-7. 本轮架构调整后尚未执行构建、编译或运行验证
+2. Google / Claude 目前只有配置入口，正式聊天运行时仍只接入 openai-compatible 协议
+3. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、应用设置、角色选择、缩放和性能模式 UI
+4. ConfigManager 已有缩放和性能字段，但 PetWindow 尚未真正应用缩放、性能模式和角色选择
+5. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
+6. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
+7. 当前 FrameAnimator 采用当前角色包全部状态帧预加载，尚未做懒加载
+8. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
+9. 最近一次流式状态修正已本地提交，推送时遇到远程认证失败，需要重新认证后推送
 ```
 
 ---
@@ -565,26 +588,32 @@ error ：20 帧
 短期建议：
 
 ```text
-1. 在用户确认后做一次构建验证
-2. 修复构建或静态检查发现的问题
-3. 补最小 README.md，记录当前开发状态、构建方式、素材版权提示
-4. 确认 LICENSE 是否采用 MIT
-5. 在进入 AI 前，做一次桌宠内核稳定性检查：
-   - 启动显示
-   - idle 动画
-   - 状态切换
-   - 托盘隐藏 / 显示
-   - 配置保存 / 恢复
-   - 日志写入 / 轮转路径
+1. 解决远程仓库认证问题，并推送本地提交
+2. 用户手测流式状态修正：
+   - 发送消息后等待阶段应保持 think
+   - 等待阶段拖动松开应回到 think
+   - 收到首段回复后应进入 talk
+   - 长文本流式输出期间应持续 talk
+3. 给 ConversationManager 增加内存历史上限，避免长期对话无限增长
+4. 把 AI 测试能力迁移到后续设置页，不再放在角色右键菜单
+5. 更新设置页结构，为 AI、应用、角色、性能分区预留位置
 ```
 
 中期建议：
 
 ```text
-1. 补 SettingsDialog 的最小框架
-2. 补 ChatBubble
-3. 再接入 OpenAI Compatible 非流式 AI 对话
-4. AI 接入后再做 think -> talk -> idle / error -> idle 状态联动
+1. 完善设置界面：
+   - AI 配置和测试
+   - 置顶、缩放、性能模式
+   - 角色包路径和角色切换
+2. 应用 AppConfig 中已有但尚未落地的字段：
+   - scale
+   - performanceMode
+   - pauseWhenHidden
+   - enableLazyLoad
+3. 解析并应用角色包 base / anchor / bubble 配置
+4. 评估是否移动 shiroko 到 resources/characters/shiroko
+5. 补一轮可重复的稳定性与性能测试记录
 ```
 
 ---
@@ -594,10 +623,11 @@ error ：20 帧
 后续开始写代码前，需要逐项确认：
 
 ```text
-1. 是否创建 MIT LICENSE
-2. 是否创建项目根 README.md
-3. 是否把 shiroko 移动到 resources/characters/shiroko
-4. 是否保持当前“预加载全部当前角色状态帧”的策略，还是改成按状态懒加载
-5. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-6. 是否在下一步执行构建验证
+1. 远程仓库认证失败，当前本地提交尚未推送成功
+2. 是否把 shiroko 移动到 resources/characters/shiroko
+3. 是否保持当前“预加载全部当前角色状态帧”的策略，还是改成按状态懒加载
+4. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
+5. Google / Claude 是先禁用正式聊天提示，还是继续实现原生 Provider
+6. 设置页下一步先做 AI 测试入口，还是先做应用缩放 / 性能设置
+7. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
 ```
