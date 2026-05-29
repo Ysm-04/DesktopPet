@@ -5,14 +5,16 @@
 #include <QPixmap>
 #include <QSize>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 class AnimationClip
 {
 public:
-    static AnimationClip fromState(const CharacterState &state, const QSize &targetSize);
+    static AnimationClip fromState(const CharacterState &state, const QSize &targetSize, bool loadFrames = true);
 
     bool isValid() const;
+    bool ensureLoaded();
     const QPixmap &frameAt(int index) const;
     int frameCount() const;
 
@@ -22,5 +24,9 @@ public:
     QString nextState;
 
 private:
+    void loadFrames();
+
+    QStringList m_framePaths;
+    QSize m_targetSize;
     QVector<QPixmap> m_frames;
 };

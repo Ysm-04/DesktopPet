@@ -12,7 +12,10 @@
 #include <QList>
 #include <QPair>
 #include <QSpinBox>
+#include <QTabWidget>
 #include <QVBoxLayout>
+#include <QWidget>
+#include <QtGlobal>
 
 namespace
 {
@@ -28,7 +31,7 @@ QString normalizedProviderName(const QString &provider)
 }
 }
 
-SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent)
+SettingsDialog::SettingsDialog(const AIConfigStore &configStore, const AppConfig &appConfig, QWidget *parent)
     : QDialog(parent)
     , m_providerComboBox(new QComboBox(this))
     , m_baseUrlEdit(new QLineEdit(this))
@@ -39,11 +42,16 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
     , m_temperatureSpinBox(new QDoubleSpinBox(this))
     , m_maxTokensSpinBox(new QSpinBox(this))
     , m_allowPlainApiKeyCheckBox(new QCheckBox(QStringLiteral("允许在非 Windows 环境明文保存 API Key"), this))
+    , m_scaleSpinBox(new QSpinBox(this))
+    , m_performanceModeComboBox(new QComboBox(this))
+    , m_pauseWhenHiddenCheckBox(new QCheckBox(QStringLiteral("隐藏到托盘时暂停动画"), this))
+    , m_enableLazyLoadCheckBox(new QCheckBox(QStringLiteral("启用动画懒加载"), this))
     , m_configStore(configStore)
+    , m_appConfig(appConfig)
 {
     setWindowTitle(QStringLiteral("设置"));
     setModal(true);
-    resize(460, 360);
+    resize(500, 430);
 
     const QList<QPair<QString, QString>> providers = {
         {QStringLiteral("openai"), QStringLiteral("OpenAI")},
@@ -72,6 +80,19 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
 
     m_maxTokensSpinBox->setRange(1, 200000);
 
+    m_scaleSpinBox->setRange(50, 200);
+    m_scaleSpinBox->setSingleStep(10);
+    m_scaleSpinBox->setSuffix(QStringLiteral("%"));
+    m_scaleSpinBox->setValue(qRound(qBound(0.5, m_appConfig.scale, 2.0) * 100.0));
+
+    m_performanceModeComboBox->addItem(QStringLiteral("标准"), QStringLiteral("standard"));
+    m_performanceModeComboBox->addItem(QStringLiteral("低功耗"), QStringLiteral("low-power"));
+    const int performanceModeIndex = m_performanceModeComboBox->findData(m_appConfig.performanceMode);
+    m_performanceModeComboBox->setCurrentIndex(performanceModeIndex >= 0 ? performanceModeIndex : 0);
+
+    m_pauseWhenHiddenCheckBox->setChecked(m_appConfig.pauseWhenHidden);
+    m_enableLazyLoadCheckBox->setChecked(m_appConfig.enableLazyLoad);
+
     m_allowPlainApiKeyCheckBox->setVisible(!SecretStore::isEncryptionAvailable());
     m_currentProvider = normalizedProviderName(m_providerComboBox->currentData().toString());
     loadProviderConfig(m_currentProvider);
@@ -87,6 +108,22 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
     formLayout->addRow(QStringLiteral("Max Tokens"), m_maxTokensSpinBox);
     formLayout->addRow(QString(), m_allowPlainApiKeyCheckBox);
 
+    auto *aiPage = new QWidget(this);
+    aiPage->setLayout(formLayout);
+
+    auto *appFormLayout = new QFormLayout();
+    appFormLayout->addRow(QStringLiteral("缩放"), m_scaleSpinBox);
+    appFormLayout->addRow(QStringLiteral("性能模式"), m_performanceModeComboBox);
+    appFormLayout->addRow(QString(), m_pauseWhenHiddenCheckBox);
+    appFormLayout->addRow(QString(), m_enableLazyLoadCheckBox);
+
+    auto *appPage = new QWidget(this);
+    appPage->setLayout(appFormLayout);
+
+    auto *tabWidget = new QTabWidget(this);
+    tabWidget->addTab(aiPage, QStringLiteral("AI"));
+    tabWidget->addTab(appPage, QStringLiteral("应用"));
+
     auto *storageHintLabel = new QLabel(this);
     storageHintLabel->setWordWrap(true);
     storageHintLabel->setText(SecretStore::isEncryptionAvailable()
@@ -98,7 +135,7 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto *layout = new QVBoxLayout(this);
-    layout->addLayout(formLayout);
+    layout->addWidget(tabWidget);
     layout->addWidget(storageHintLabel);
     layout->addWidget(buttonBox);
 
@@ -116,6 +153,20 @@ AIConfigStore SettingsDialog::aiConfigStore() const
     store.activeProvider = provider;
     store.providers.insert(provider, configFromForm(provider));
     return store;
+}
+
+AppConfig SettingsDialog::appConfig() const
+{
+    AppConfig config = m_appConfig;
+    config.scale = m_scaleSpinBox->value() / 100.0;
+    config.performanceMode = m_performanceModeComboBox->currentData().toString();
+    if (config.performanceMode.isEmpty())
+    {
+        config.performanceMode = QStringLiteral("standard");
+    }
+    config.pauseWhenHidden = m_pauseWhenHiddenCheckBox->isChecked();
+    config.enableLazyLoad = m_enableLazyLoadCheckBox->isChecked();
+    return config;
 }
 
 void SettingsDialog::cacheCurrentProvider()

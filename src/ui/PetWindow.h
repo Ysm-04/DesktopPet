@@ -59,12 +59,16 @@ private:
     void finishStreamingChat();
     void cancelStreamingChat();
     bool hasActiveAIRequest() const;
+    bool isManualStateSwitchLocked() const;
     void resetBubbleAutoHideTimer();
     QPoint chatInputAnchorPosition() const;
     void updateBubblePosition();
     QPoint bubbleAnchorPosition() const;
     void playState(const QString &stateName, bool centerWindow);
     void playResolvedState(const QString &stateName, bool centerWindow);
+    QSize animationTargetSize() const;
+    int effectiveAnimationFps(int fps) const;
+    bool isLowPowerMode() const;
     void scheduleIdleBehavior();
     void playIdleBehavior();
     void returnToIdleFromBehavior();
@@ -81,6 +85,7 @@ private:
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;
     QTimer m_streamBubbleUpdateTimer;
+    AppConfig m_appConfig;
     CharacterPackage m_characterPackage;
     QMap<QString, AnimationClip> m_clips;
     FrameAnimator m_frameAnimator;

@@ -28,6 +28,7 @@
 #include <QSet>
 #include <QStringList>
 #include <QVBoxLayout>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -46,6 +47,20 @@ QString previewImagePath()
 constexpr int MaxUserMessageLength = 4000;
 constexpr int ChatInputLowerOffsetY = 48;
 constexpr int StreamBubbleUpdateIntervalMs = 80;
+constexpr int BaseAnimationTargetSize = 320;
+constexpr int LowPowerFpsCap = 6;
+constexpr int ChatFinishedReturnDelayMs = 1500;
+
+AppConfig normalizedAppConfig(AppConfig config)
+{
+    config.scale = qBound(0.5, config.scale, 2.0);
+    if (config.performanceMode != QStringLiteral("standard")
+        && config.performanceMode != QStringLiteral("low-power"))
+    {
+        config.performanceMode = QStringLiteral("standard");
+    }
+    return config;
+}
 
 bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 {
@@ -199,17 +214,41 @@ PetWindow::~PetWindow() = default;
 
 void PetWindow::applyAppConfig(const AppConfig &config)
 {
-    setAlwaysOnTop(config.alwaysOnTop);
+    const AppConfig normalizedConfig = normalizedAppConfig(config);
+    const bool rebuildClips = !qFuzzyCompare(m_appConfig.scale, normalizedConfig.scale)
+        || m_appConfig.performanceMode != normalizedConfig.performanceMode
+        || m_appConfig.enableLazyLoad != normalizedConfig.enableLazyLoad;
 
-    if (config.hasWindowPosition && isPointVisibleOnScreen(config.windowPosition))
+    m_appConfig = normalizedConfig;
+    setAlwaysOnTop(m_appConfig.alwaysOnTop);
+
+    if (m_appConfig.hasWindowPosition && isPointVisibleOnScreen(m_appConfig.windowPosition))
     {
-        move(config.windowPosition);
+        move(m_appConfig.windowPosition);
+    }
+
+    if (rebuildClips && !m_characterPackage.states.isEmpty())
+    {
+        const QString previousState = m_stateMachine.currentState().isEmpty()
+            ? QStringLiteral("idle")
+            : m_stateMachine.currentState();
+
+        m_frameAnimator.stop();
+        buildAnimationClips();
+
+        const QString nextState = m_clips.contains(previousState)
+            ? previousState
+            : QStringLiteral("idle");
+        if (m_clips.contains(nextState))
+        {
+            playResolvedState(m_stateMachine.requestState(nextState), false);
+        }
     }
 }
 
 AppConfig PetWindow::currentAppConfig() const
 {
-    AppConfig config;
+    AppConfig config = m_appConfig;
     config.windowPosition = pos();
     config.hasWindowPosition = true;
     config.alwaysOnTop = m_alwaysOnTop;
@@ -218,6 +257,11 @@ AppConfig PetWindow::currentAppConfig() const
 
 void PetWindow::pauseAnimation()
 {
+    if (!m_appConfig.pauseWhenHidden)
+    {
+        return;
+    }
+
     m_returnToIdleAfterResume = m_behaviorReturnTimer.isActive();
     m_idleBehaviorTimer.stop();
     m_behaviorReturnTimer.stop();
@@ -294,10 +338,19 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     else if (selectedAction == settingsAction)
     {
         ConfigManager configManager;
-        SettingsDialog dialog(configManager.loadAIConfigStore(), this);
-        if (dialog.exec() == QDialog::Accepted && !configManager.saveAIConfigStore(dialog.aiConfigStore()))
+        SettingsDialog dialog(configManager.loadAIConfigStore(), currentAppConfig(), this);
+        if (dialog.exec() == QDialog::Accepted)
         {
-            Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
+            if (!configManager.saveAIConfigStore(dialog.aiConfigStore()))
+            {
+                Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
+            }
+
+            applyAppConfig(dialog.appConfig());
+            if (!configManager.saveAppConfig(currentAppConfig()))
+            {
+                Logger::warning(QStringLiteral("Failed to save app config from settings dialog."));
+            }
         }
     }
     else if (selectedAction == exitAction)
@@ -306,6 +359,11 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     }
     else if (selectedAction != nullptr && selectedAction->data().isValid())
     {
+        if (isManualStateSwitchLocked())
+        {
+            return;
+        }
+
         playState(selectedAction->data().toString(), false);
     }
 }
@@ -390,10 +448,20 @@ bool PetWindow::submitChatMessage(const QString &message)
             window->m_streamBubbleUpdateTimer.stop();
             if (response.success)
             {
+                const bool shouldReturnToIdleAfterChat =
+                    window->m_streamingTalkStarted
+                    || window->m_stateMachine.currentState() == QStringLiteral("think")
+                    || window->m_stateMachine.currentState() == QStringLiteral("talk")
+                    || window->m_frameAnimator.currentStateName() == QStringLiteral("think")
+                    || window->m_frameAnimator.currentStateName() == QStringLiteral("talk");
                 window->finishStreamingChat();
                 window->m_streamingAssistantText = response.content;
                 window->flushStreamingBubble(true);
                 window->refreshChatHistoryPanel();
+                if (shouldReturnToIdleAfterChat)
+                {
+                    window->m_behaviorReturnTimer.start(ChatFinishedReturnDelayMs);
+                }
                 return;
             }
 
@@ -440,6 +508,17 @@ void PetWindow::cancelActiveAIRequest()
 bool PetWindow::hasActiveAIRequest() const
 {
     return m_conversationManager && m_conversationManager->isBusy();
+}
+
+bool PetWindow::isManualStateSwitchLocked() const
+{
+    if (m_streamingChatActive || hasActiveAIRequest())
+    {
+        return true;
+    }
+
+    const QString currentState = m_stateMachine.currentState();
+    return currentState == QStringLiteral("think") || currentState == QStringLiteral("talk");
 }
 
 void PetWindow::showConversationHistory()
@@ -640,10 +719,12 @@ void PetWindow::buildAnimationClips()
     m_clips.clear();
 
     QSet<QString> availableStates;
-    const QSize targetSize(320, 320);
+    const QSize targetSize = animationTargetSize();
+    const bool loadFramesImmediately = !m_appConfig.enableLazyLoad;
     for (auto iterator = m_characterPackage.states.constBegin(); iterator != m_characterPackage.states.constEnd(); ++iterator)
     {
-        AnimationClip clip = AnimationClip::fromState(iterator.value(), targetSize);
+        AnimationClip clip = AnimationClip::fromState(iterator.value(), targetSize, loadFramesImmediately);
+        clip.fps = effectiveAnimationFps(clip.fps);
         if (!clip.isValid())
         {
             continue;
@@ -659,6 +740,7 @@ void PetWindow::buildAnimationClips()
 void PetWindow::addStateTestActions(QMenu *menu)
 {
     QMenu *stateMenu = menu->addMenu(QStringLiteral("State Test"));
+    const bool stateSwitchLocked = isManualStateSwitchLocked();
     const QStringList stateNames = {
         QStringLiteral("idle"),
         QStringLiteral("talk"),
@@ -680,7 +762,7 @@ void PetWindow::addStateTestActions(QMenu *menu)
         stateAction->setData(stateName);
     }
 
-    stateMenu->setEnabled(!stateMenu->actions().isEmpty());
+    stateMenu->setEnabled(!stateSwitchLocked && !stateMenu->actions().isEmpty());
 }
 
 void PetWindow::updateBubblePosition()
@@ -709,17 +791,17 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
         && stateName != QStringLiteral("error")
         && stateName != QStringLiteral("drag"))
     {
-        const QString heldState = m_streamingTalkStarted
+        const QString preferredHeldState = m_streamingTalkStarted
             ? QStringLiteral("talk")
             : QStringLiteral("think");
-
-        if (stateName != heldState && m_clips.contains(heldState))
-        {
-            playResolvedState(heldState, centerWindow);
-        }
+        const QString heldState = m_stateMachine.requestState(preferredHeldState, StateRequestSource::System);
 
         if (stateName != heldState)
         {
+            if (!heldState.isEmpty() && m_clips.contains(heldState))
+            {
+                playResolvedState(heldState, centerWindow);
+            }
             return;
         }
     }
@@ -729,13 +811,18 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
         return;
     }
 
-    auto clipIterator = m_clips.constFind(stateName);
-    if (clipIterator == m_clips.constEnd())
+    auto clipIterator = m_clips.find(stateName);
+    if (clipIterator == m_clips.end())
     {
         return;
     }
 
-    const AnimationClip *clip = &clipIterator.value();
+    AnimationClip *clip = &clipIterator.value();
+    if (!clip->ensureLoaded())
+    {
+        return;
+    }
+
     m_idleBehaviorTimer.stop();
     m_behaviorReturnTimer.stop();
     m_centerNextFrame = centerWindow;
@@ -751,6 +838,28 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
     }
 }
 
+QSize PetWindow::animationTargetSize() const
+{
+    const int sideLength = qRound(BaseAnimationTargetSize * m_appConfig.scale);
+    const int boundedSideLength = qBound(BaseAnimationTargetSize / 2, sideLength, BaseAnimationTargetSize * 2);
+    return QSize(boundedSideLength, boundedSideLength);
+}
+
+int PetWindow::effectiveAnimationFps(int fps) const
+{
+    if (isLowPowerMode())
+    {
+        return qMax(1, qMin(fps, LowPowerFpsCap));
+    }
+
+    return qMax(1, fps);
+}
+
+bool PetWindow::isLowPowerMode() const
+{
+    return m_appConfig.performanceMode == QStringLiteral("low-power");
+}
+
 void PetWindow::scheduleIdleBehavior()
 {
     if (!m_clips.contains(QStringLiteral("idle")))
@@ -758,7 +867,9 @@ void PetWindow::scheduleIdleBehavior()
         return;
     }
 
-    const int idleDelayMs = QRandomGenerator::global()->bounded(8000, 16001);
+    const int idleDelayMs = isLowPowerMode()
+        ? QRandomGenerator::global()->bounded(16000, 30001)
+        : QRandomGenerator::global()->bounded(8000, 16001);
     m_idleBehaviorTimer.start(idleDelayMs);
 }
 
@@ -826,15 +937,20 @@ void PetWindow::setDisplayImage(const QString &imagePath, bool centerWindow)
         return;
     }
 
-    const QSize targetSize(320, 320);
+    const QSize targetSize = animationTargetSize();
     const QPixmap scaled = pixmap.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     setDisplayPixmap(scaled, centerWindow);
 }
 
 void PetWindow::setDisplayPixmap(const QPixmap &pixmap, bool centerWindow)
 {
+    const QSize previousSize = size();
     m_petView->setFrame(pixmap);
     resize(pixmap.size());
+    if (size() != previousSize)
+    {
+        updateBubblePosition();
+    }
 
     if (centerWindow)
     {
@@ -862,6 +978,12 @@ bool PetWindow::isPointVisibleOnScreen(const QPoint &point) const
 
 void PetWindow::setAlwaysOnTop(bool enabled)
 {
+    const bool currentlyOnTop = windowFlags().testFlag(Qt::WindowStaysOnTopHint);
+    if (m_alwaysOnTop == enabled && currentlyOnTop == enabled)
+    {
+        return;
+    }
+
     m_alwaysOnTop = enabled;
     const bool wasVisible = isVisible();
 

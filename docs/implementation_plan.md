@@ -566,6 +566,8 @@ error ：20 帧
    已删除临时 AI 测试入口和气泡测试入口
    已支持 OpenAI / Google / DeepSeek / Custom 配置分 Provider 保存
    已移除废弃 Provider 配置入口，并在读取旧配置时清理废弃 Provider 配置
+   已支持应用设置页：缩放、性能模式、隐藏暂停、懒加载
+   已将 AppConfig 的 scale / performanceMode / pauseWhenHidden / enableLazyLoad 接入运行时
    Windows 下 API Key 使用 DPAPI 加密保存，非 Windows 需用户确认后才允许明文保存
 ```
 
@@ -573,12 +575,10 @@ error ：20 帧
 
 ```text
 1. shiroko 角色包仍位于项目根目录 shiroko/，尚未移动到 resources/characters/shiroko
-2. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、应用设置、角色选择、缩放和性能模式 UI
-3. ConfigManager 已有缩放和性能字段，但 PetWindow 尚未真正应用缩放、性能模式和角色选择
-4. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
-5. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
-6. 当前 FrameAnimator 采用当前角色包全部状态帧预加载，尚未做懒加载
-7. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
+2. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、角色选择和更完整的分区布局
+3. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
+4. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
+5. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
 ```
 
 ---
@@ -600,7 +600,11 @@ error ：20 帧
    - 长文本流式输出期间应持续 talk
 3. 给 ConversationManager 增加内存历史上限，避免长期对话无限增长
 4. 把 AI 测试能力迁移到后续设置页，不再放在角色右键菜单
-5. 更新设置页结构，为 AI、应用、角色、性能分区预留位置
+5. 用户手测应用设置：
+   - 缩放比例
+   - 标准 / 低功耗性能模式
+   - 隐藏到托盘时暂停动画
+   - 动画懒加载
 ```
 
 中期建议：
@@ -608,16 +612,10 @@ error ：20 帧
 ```text
 1. 完善设置界面：
    - AI 配置和测试
-   - 置顶、缩放、性能模式
    - 角色包路径和角色切换
-2. 应用 AppConfig 中已有但尚未落地的字段：
-   - scale
-   - performanceMode
-   - pauseWhenHidden
-   - enableLazyLoad
-3. 解析并应用角色包 base / anchor / bubble 配置
-4. 评估是否移动 shiroko 到 resources/characters/shiroko
-5. 补一轮可重复的稳定性与性能测试记录
+2. 解析并应用角色包 base / anchor / bubble 配置
+3. 评估是否移动 shiroko 到 resources/characters/shiroko
+4. 补一轮可重复的稳定性与性能测试记录
 ```
 
 ---
@@ -628,8 +626,7 @@ error ：20 帧
 
 ```text
 1. 是否把 shiroko 移动到 resources/characters/shiroko
-2. 是否保持当前“预加载全部当前角色状态帧”的策略，还是改成按状态懒加载
-3. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-4. 设置页下一步先做 AI 测试入口，还是先做应用缩放 / 性能设置
-5. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
+2. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
+3. 设置页下一步先做 AI 测试入口，还是先做角色包配置
+4. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
 ```

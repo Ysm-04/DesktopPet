@@ -1684,8 +1684,7 @@ MIT License 开源
 ```text
 1. 设置页内 AI 连通性测试
 2. 对话历史内存上限和可选持久化
-3. AppConfig 中缩放、性能模式等字段的实际应用
-4. character.json 中 base、anchor、bubble offset 的解析与应用
-5. 角色包位置整理、角色切换和懒加载策略
-6. 发布前素材授权确认与打包验证
+3. character.json 中 base、anchor、bubble offset 的解析与应用
+4. 角色包位置整理和角色切换
+5. 发布前素材授权确认与打包验证
 ```

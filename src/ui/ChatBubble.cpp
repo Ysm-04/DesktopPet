@@ -2,11 +2,11 @@
 
 #include <QApplication>
 #include <QEvent>
-#include <QFontMetrics>
 #include <QFrame>
 #include <QRect>
 #include <QScrollBar>
 #include <QSize>
+#include <QTextDocument>
 #include <QVBoxLayout>
 #include <QtGlobal>
 
@@ -18,6 +18,18 @@ constexpr int MaxBubbleHeight = 220;
 constexpr int BubbleOffsetY = 8;
 constexpr int BubblePaddingWidth = 28;
 constexpr int BubblePaddingHeight = 24;
+constexpr int BubbleWidthSafetyMargin = 12;
+
+QSizeF documentSizeForWidth(const QTextEdit *textEdit, const QString &message, int width)
+{
+    QTextDocument document;
+    document.setDefaultFont(textEdit->font());
+    document.setDefaultTextOption(textEdit->document()->defaultTextOption());
+    document.setPlainText(message);
+    document.setDocumentMargin(textEdit->document()->documentMargin());
+    document.setTextWidth(width);
+    return document.size();
+}
 }
 
 ChatBubble::ChatBubble(QWidget *parent)
@@ -78,6 +90,10 @@ void ChatBubble::showMessage(const QString &message, const QPoint &anchorPositio
     m_textEdit->setPlainText(trimmed);
 
     const QSize bubbleSize = preferredBubbleSize(trimmed);
+    const int documentWidth = bubbleSize.width() - BubblePaddingWidth;
+    const QSizeF documentSize = documentSizeForWidth(m_textEdit, trimmed, documentWidth);
+    const bool needsVerticalScroll = documentSize.height() + BubblePaddingHeight > MaxBubbleHeight;
+    m_textEdit->setVerticalScrollBarPolicy(needsVerticalScroll ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
     m_textEdit->setFixedSize(bubbleSize);
     setFixedSize(bubbleSize);
     updatePosition();
@@ -180,17 +196,29 @@ bool ChatBubble::isUserInteractionEvent(QEvent *event) const
 
 QSize ChatBubble::preferredBubbleSize(const QString &message) const
 {
-    const QFontMetrics metrics(m_textEdit->font());
-    const int textWidth = metrics.horizontalAdvance(message);
-    const int preferredWidth = qBound(MinBubbleWidth, textWidth + BubblePaddingWidth, MaxBubbleWidth);
+    QTextDocument singleLineDocument;
+    singleLineDocument.setDefaultFont(m_textEdit->font());
+    singleLineDocument.setDefaultTextOption(m_textEdit->document()->defaultTextOption());
+    singleLineDocument.setPlainText(message);
+    singleLineDocument.setDocumentMargin(m_textEdit->document()->documentMargin());
+    singleLineDocument.setTextWidth(-1);
 
-    const QRect wrappedRect = metrics.boundingRect(
-        QRect(0, 0, preferredWidth - BubblePaddingWidth, 10000),
-        Qt::TextWordWrap,
-        message);
+    const int singleLineWidth = qCeil(singleLineDocument.idealWidth())
+        + BubblePaddingWidth
+        + BubbleWidthSafetyMargin;
+    int preferredWidth = qBound(MinBubbleWidth, singleLineWidth, MaxBubbleWidth);
 
-    const int preferredHeight = qMin(wrappedRect.height() + BubblePaddingHeight, MaxBubbleHeight);
-    return QSize(preferredWidth, preferredHeight);
+    QSizeF documentSize = documentSizeForWidth(m_textEdit, message, preferredWidth - BubblePaddingWidth);
+    int preferredHeight = qCeil(documentSize.height()) + BubblePaddingHeight;
+    if (preferredHeight > MaxBubbleHeight)
+    {
+        const int scrollbarWidth = m_textEdit->verticalScrollBar()->sizeHint().width();
+        preferredWidth = qMin(MaxBubbleWidth, preferredWidth + scrollbarWidth);
+        documentSize = documentSizeForWidth(m_textEdit, message, preferredWidth - BubblePaddingWidth - scrollbarWidth);
+        preferredHeight = qCeil(documentSize.height()) + BubblePaddingHeight;
+    }
+
+    return QSize(preferredWidth, qMin(preferredHeight, MaxBubbleHeight));
 }
 
 void ChatBubble::updatePosition()

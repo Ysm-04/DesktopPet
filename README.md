@@ -15,9 +15,10 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - `idle` / `talk` / `think` / `sleep` / `happy` / `drag` / `error` 状态
 - 托盘显示、隐藏、退出
 - 隐藏时暂停动画，显示时恢复动画
-- 保存窗口位置和置顶状态
+- 保存窗口位置、置顶、缩放和性能设置
 - 文件日志和基础轮转
 - 设置窗口
+- 应用设置：缩放、性能模式、隐藏暂停、懒加载
 - AI Provider 分组配置
 - Windows DPAPI 加密保存 API Key
 - 非 Windows 环境经用户确认后明文保存 API Key
@@ -32,11 +33,8 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 尚未实现：
 
 - 设置页内 AI 连通性测试
-- 缩放和性能模式 UI
-- AppConfig 中缩放 / 性能字段的实际应用
 - 角色导入/切换界面
 - 对话历史持久化
-- 角色包懒加载
 - 打包发布脚本
 
 ## 技术栈

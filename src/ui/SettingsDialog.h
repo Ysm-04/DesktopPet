@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../config/AIConfig.h"
+#include "../config/AppConfig.h"
 
 #include <QDialog>
 
@@ -13,9 +14,10 @@ class QSpinBox;
 class SettingsDialog : public QDialog
 {
 public:
-    explicit SettingsDialog(const AIConfigStore &configStore, QWidget *parent = nullptr);
+    explicit SettingsDialog(const AIConfigStore &configStore, const AppConfig &appConfig, QWidget *parent = nullptr);
 
     AIConfigStore aiConfigStore() const;
+    AppConfig appConfig() const;
 
 private:
     void cacheCurrentProvider();
@@ -33,6 +35,11 @@ private:
     QDoubleSpinBox *m_temperatureSpinBox = nullptr;
     QSpinBox *m_maxTokensSpinBox = nullptr;
     QCheckBox *m_allowPlainApiKeyCheckBox = nullptr;
+    QSpinBox *m_scaleSpinBox = nullptr;
+    QComboBox *m_performanceModeComboBox = nullptr;
+    QCheckBox *m_pauseWhenHiddenCheckBox = nullptr;
+    QCheckBox *m_enableLazyLoadCheckBox = nullptr;
     AIConfigStore m_configStore;
+    AppConfig m_appConfig;
     QString m_currentProvider;
 };
