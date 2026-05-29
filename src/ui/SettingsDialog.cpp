@@ -14,7 +14,16 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-SettingsDialog::SettingsDialog(const AIConfig &config, QWidget *parent)
+namespace
+{
+QString normalizedProviderName(const QString &provider)
+{
+    const QString normalized = provider.trimmed().toLower();
+    return normalized.isEmpty() ? QStringLiteral("custom") : normalized;
+}
+}
+
+SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent)
     : QDialog(parent)
     , m_providerComboBox(new QComboBox(this))
     , m_baseUrlEdit(new QLineEdit(this))
@@ -25,7 +34,7 @@ SettingsDialog::SettingsDialog(const AIConfig &config, QWidget *parent)
     , m_temperatureSpinBox(new QDoubleSpinBox(this))
     , m_maxTokensSpinBox(new QSpinBox(this))
     , m_allowPlainApiKeyCheckBox(new QCheckBox(QStringLiteral("允许在非 Windows 环境明文保存 API Key"), this))
-    , m_initialConfig(config)
+    , m_configStore(configStore)
 {
     setWindowTitle(QStringLiteral("设置"));
     setModal(true);
@@ -44,39 +53,24 @@ SettingsDialog::SettingsDialog(const AIConfig &config, QWidget *parent)
         m_providerComboBox->addItem(provider.second, provider.first);
     }
 
-    const int providerIndex = m_providerComboBox->findData(config.provider);
+    const QString activeProvider = normalizedProviderName(m_configStore.activeProvider);
+    const int providerIndex = m_providerComboBox->findData(activeProvider);
     m_providerComboBox->setCurrentIndex(providerIndex >= 0 ? providerIndex : m_providerComboBox->findData(QStringLiteral("custom")));
 
-    QString apiKey = config.apiKey;
-    if (config.apiKeyStorage == QStringLiteral("windows-dpapi") && !config.apiKeyEncrypted.isEmpty())
-    {
-        const SecretStore::Result result = SecretStore::unprotectText(config.apiKeyEncrypted);
-        if (result.success)
-        {
-            apiKey = result.value;
-        }
-    }
-
-    m_baseUrlEdit->setText(config.baseUrl);
     m_apiKeyEdit->setEchoMode(QLineEdit::Password);
-    m_apiKeyEdit->setText(apiKey);
-    m_modelEdit->setText(config.model);
-    m_pathEdit->setText(config.path);
 
     m_timeoutSpinBox->setRange(1000, 300000);
     m_timeoutSpinBox->setSingleStep(1000);
-    m_timeoutSpinBox->setValue(config.timeoutMs);
 
     m_temperatureSpinBox->setRange(0.0, 2.0);
     m_temperatureSpinBox->setSingleStep(0.1);
     m_temperatureSpinBox->setDecimals(2);
-    m_temperatureSpinBox->setValue(config.temperature);
 
     m_maxTokensSpinBox->setRange(1, 200000);
-    m_maxTokensSpinBox->setValue(config.maxTokens);
 
-    m_allowPlainApiKeyCheckBox->setChecked(config.allowPlainApiKey);
     m_allowPlainApiKeyCheckBox->setVisible(!SecretStore::isEncryptionAvailable());
+    m_currentProvider = normalizedProviderName(m_providerComboBox->currentData().toString());
+    loadProviderConfig(m_currentProvider);
 
     auto *formLayout = new QFormLayout();
     formLayout->addRow(QStringLiteral("服务商"), m_providerComboBox);
@@ -105,15 +99,63 @@ SettingsDialog::SettingsDialog(const AIConfig &config, QWidget *parent)
     layout->addWidget(buttonBox);
 
     connect(m_providerComboBox, &QComboBox::currentTextChanged, this, [this]() {
-        applyProviderPreset(m_providerComboBox->currentData().toString());
+        switchProvider(m_providerComboBox->currentData().toString());
     });
 }
 
-AIConfig SettingsDialog::aiConfig() const
+AIConfigStore SettingsDialog::aiConfigStore() const
 {
-    AIConfig config = m_initialConfig;
-    config.provider = m_providerComboBox->currentData().toString();
-    config.protocol = defaultAIConfigForProvider(config.provider).protocol;
+    AIConfigStore store = m_configStore;
+    const QString provider = normalizedProviderName(m_providerComboBox->currentData().toString());
+    store.activeProvider = provider;
+    store.providers.insert(provider, configFromForm(provider));
+    return store;
+}
+
+void SettingsDialog::cacheCurrentProvider()
+{
+    if (m_currentProvider.isEmpty())
+    {
+        return;
+    }
+
+    m_configStore.providers.insert(m_currentProvider, configFromForm(m_currentProvider));
+}
+
+void SettingsDialog::loadProviderConfig(const QString &provider)
+{
+    const QString normalizedProvider = normalizedProviderName(provider);
+    const AIConfig config = m_configStore.providers.value(normalizedProvider, defaultAIConfigForProvider(normalizedProvider));
+
+    m_baseUrlEdit->setText(config.baseUrl);
+    m_apiKeyEdit->setText(decryptedApiKey(config));
+    m_modelEdit->setText(config.model);
+    m_pathEdit->setText(config.path);
+    m_timeoutSpinBox->setValue(config.timeoutMs);
+    m_temperatureSpinBox->setValue(config.temperature);
+    m_maxTokensSpinBox->setValue(config.maxTokens);
+    m_allowPlainApiKeyCheckBox->setChecked(config.allowPlainApiKey);
+}
+
+void SettingsDialog::switchProvider(const QString &provider)
+{
+    const QString normalizedProvider = normalizedProviderName(provider);
+    if (normalizedProvider == m_currentProvider)
+    {
+        return;
+    }
+
+    cacheCurrentProvider();
+    loadProviderConfig(normalizedProvider);
+    m_currentProvider = normalizedProvider;
+}
+
+AIConfig SettingsDialog::configFromForm(const QString &provider) const
+{
+    const QString normalizedProvider = normalizedProviderName(provider);
+    AIConfig config = m_configStore.providers.value(normalizedProvider, defaultAIConfigForProvider(normalizedProvider));
+    config.provider = normalizedProvider;
+    config.protocol = defaultAIConfigForProvider(normalizedProvider).protocol;
     config.baseUrl = m_baseUrlEdit->text().trimmed();
     config.model = m_modelEdit->text().trimmed();
     config.path = m_pathEdit->text().trimmed();
@@ -156,9 +198,18 @@ AIConfig SettingsDialog::aiConfig() const
     return config;
 }
 
-void SettingsDialog::applyProviderPreset(const QString &provider)
+QString SettingsDialog::decryptedApiKey(const AIConfig &config) const
 {
-    const AIConfig preset = defaultAIConfigForProvider(provider);
-    m_baseUrlEdit->setText(preset.baseUrl);
-    m_pathEdit->setText(preset.path);
+    if (config.apiKeyStorage == QStringLiteral("windows-dpapi") && !config.apiKeyEncrypted.isEmpty())
+    {
+        const SecretStore::Result result = SecretStore::unprotectText(config.apiKeyEncrypted);
+        if (result.success)
+        {
+            return result.value;
+        }
+
+        return {};
+    }
+
+    return config.apiKey;
 }

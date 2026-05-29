@@ -1,5 +1,6 @@
 #include "PetWindow.h"
 
+#include "../ai/ConversationManager.h"
 #include "../ai/OpenAICompatibleProvider.h"
 #include "../character/CharacterPackageLoader.h"
 #include "../config/ConfigManager.h"
@@ -14,6 +15,7 @@
 #include <QCursor>
 #include <QDialog>
 #include <QGuiApplication>
+#include <QInputDialog>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -37,6 +39,8 @@ QString previewImagePath()
 {
     return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko/preview.png");
 }
+
+constexpr int MaxUserMessageLength = 4000;
 
 bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 {
@@ -71,11 +75,56 @@ bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 
     return true;
 }
+
+bool prepareRuntimeAIConfig(AIConfig &config, QString *errorMessage)
+{
+    if (config.protocol != QStringLiteral("openai-compatible"))
+    {
+        *errorMessage = QStringLiteral("当前 Provider 协议暂未接入。");
+        return false;
+    }
+
+    if (!populateRuntimeApiKey(config, errorMessage))
+    {
+        return false;
+    }
+
+    if (config.baseUrl.trimmed().isEmpty())
+    {
+        *errorMessage = QStringLiteral("请先在设置里配置 Base URL。");
+        return false;
+    }
+
+    if (config.model.trimmed().isEmpty())
+    {
+        *errorMessage = QStringLiteral("请先在设置里配置 Model。");
+        return false;
+    }
+
+    return true;
+}
+
+QString userVisibleErrorMessage(const ChatResponse &response)
+{
+    QString message = response.errorMessage.trimmed();
+    if (message.isEmpty())
+    {
+        message = QStringLiteral("未知错误。");
+    }
+
+    if (response.httpStatus > 0)
+    {
+        message = QStringLiteral("HTTP ") + QString::number(response.httpStatus) + QStringLiteral("：") + message;
+    }
+
+    return message;
+}
 }
 
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
     , m_chatBubble(std::make_unique<ChatBubble>())
+    , m_conversationManager(std::make_unique<ConversationManager>())
     , m_petView(new PetView(this))
     , m_dragging(false)
     , m_alwaysOnTop(true)
@@ -174,7 +223,15 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     QAction *maxBubbleAction = bubbleTestMenu->addAction(QStringLiteral("接近最大尺寸"));
     QAction *scrollBubbleAction = bubbleTestMenu->addAction(QStringLiteral("超长滚动文本"));
 
+    const bool aiRequestRunning = hasActiveAIRequest();
     QAction *aiTestAction = menu.addAction(QStringLiteral("AI 测试"));
+    aiTestAction->setEnabled(!aiRequestRunning);
+    QAction *chatAction = menu.addAction(QStringLiteral("聊天"));
+    chatAction->setEnabled(!aiRequestRunning);
+    QAction *cancelAIAction = menu.addAction(QStringLiteral("取消 AI 请求"));
+    cancelAIAction->setEnabled(aiRequestRunning);
+    QAction *clearConversationAction = menu.addAction(QStringLiteral("清空对话"));
+    clearConversationAction->setEnabled(m_conversationManager && m_conversationManager->hasHistory());
     QAction *settingsAction = menu.addAction(QStringLiteral("设置"));
 
     addStateTestActions(&menu);
@@ -203,11 +260,23 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     {
         startAITest();
     }
+    else if (selectedAction == chatAction)
+    {
+        startChat();
+    }
+    else if (selectedAction == cancelAIAction)
+    {
+        cancelActiveAIRequest();
+    }
+    else if (selectedAction == clearConversationAction)
+    {
+        clearConversation();
+    }
     else if (selectedAction == settingsAction)
     {
         ConfigManager configManager;
-        SettingsDialog dialog(configManager.loadAIConfig(), this);
-        if (dialog.exec() == QDialog::Accepted && !configManager.saveAIConfig(dialog.aiConfig()))
+        SettingsDialog dialog(configManager.loadAIConfigStore(), this);
+        if (dialog.exec() == QDialog::Accepted && !configManager.saveAIConfigStore(dialog.aiConfigStore()))
         {
             Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
         }
@@ -224,40 +293,25 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
 
 void PetWindow::startAITest()
 {
-    if (m_aiProvider && m_aiProvider->isBusy())
+    if (m_aiTestProvider && m_aiTestProvider->isBusy())
     {
         showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
         return;
     }
 
-    ConfigManager configManager;
-    AIConfig config = configManager.loadAIConfig();
-    if (config.protocol != QStringLiteral("openai-compatible"))
+    if (m_conversationManager && m_conversationManager->isBusy())
     {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("当前 Provider 协议暂未接入 AI 测试。"));
+        showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
         return;
     }
 
+    ConfigManager configManager;
+    AIConfig config = configManager.loadAIConfig();
     QString errorMessage;
-    if (!populateRuntimeApiKey(config, &errorMessage))
+    if (!prepareRuntimeAIConfig(config, &errorMessage))
     {
         playState(QStringLiteral("error"), false);
         showBubbleMessage(errorMessage);
-        return;
-    }
-
-    if (config.baseUrl.trimmed().isEmpty())
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("请先在设置里配置 Base URL。"));
-        return;
-    }
-
-    if (config.model.trimmed().isEmpty())
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("请先在设置里配置 Model。"));
         return;
     }
 
@@ -265,12 +319,12 @@ void PetWindow::startAITest()
     request.messages.append({QStringLiteral("system"), QStringLiteral("你是桌宠的最小连通性测试助手。")});
     request.messages.append({QStringLiteral("user"), QStringLiteral("请用一句话回复测试成功。")});
 
-    m_aiProvider = std::make_unique<OpenAICompatibleProvider>(config);
+    m_aiTestProvider = std::make_unique<OpenAICompatibleProvider>(config);
     playState(QStringLiteral("think"), false);
     showBubbleMessage(QStringLiteral("正在测试 AI 连接..."));
 
     QPointer<PetWindow> window(this);
-    m_aiProvider->sendChatRequest(request, [window](const ChatResponse &response) {
+    m_aiTestProvider->sendChatRequest(request, [window](const ChatResponse &response) {
         if (window.isNull())
         {
             return;
@@ -283,20 +337,131 @@ void PetWindow::startAITest()
             return;
         }
 
-        QString message = response.errorMessage.trimmed();
-        if (message.isEmpty())
+        window->playState(QStringLiteral("error"), false);
+        window->showBubbleMessage(QStringLiteral("AI 测试失败：") + userVisibleErrorMessage(response));
+    });
+}
+
+void PetWindow::startChat()
+{
+    if (m_aiTestProvider && m_aiTestProvider->isBusy())
+    {
+        showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
+        return;
+    }
+
+    if (!m_conversationManager || m_conversationManager->isBusy())
+    {
+        showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
+        return;
+    }
+
+    bool accepted = false;
+    const QString message = QInputDialog::getMultiLineText(
+        this,
+        QStringLiteral("聊天"),
+        QStringLiteral("输入消息"),
+        {},
+        &accepted).trimmed();
+    if (!accepted || message.isEmpty())
+    {
+        return;
+    }
+
+    if (message.size() > MaxUserMessageLength)
+    {
+        playState(QStringLiteral("error"), false);
+        showBubbleMessage(QStringLiteral("消息太长，请控制在 4000 字以内。"));
+        return;
+    }
+
+    ConfigManager configManager;
+    AIConfig config = configManager.loadAIConfig();
+    QString errorMessage;
+    if (!prepareRuntimeAIConfig(config, &errorMessage))
+    {
+        playState(QStringLiteral("error"), false);
+        showBubbleMessage(errorMessage);
+        return;
+    }
+
+    if (!m_conversationManager->setProvider(std::make_unique<OpenAICompatibleProvider>(config)))
+    {
+        showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
+        return;
+    }
+
+    playState(QStringLiteral("think"), false);
+    showBubbleMessage(QStringLiteral("正在思考..."));
+
+    QPointer<PetWindow> window(this);
+    m_conversationManager->sendUserMessage(message, [window](const ChatResponse &response) {
+        if (window.isNull())
         {
-            message = QStringLiteral("未知错误。");
+            return;
         }
 
-        if (response.httpStatus > 0)
+        if (response.success)
         {
-            message = QStringLiteral("HTTP ") + QString::number(response.httpStatus) + QStringLiteral("：") + message;
+            window->playState(QStringLiteral("talk"), false);
+            window->showBubbleMessage(response.content);
+            return;
         }
 
         window->playState(QStringLiteral("error"), false);
-        window->showBubbleMessage(QStringLiteral("AI 测试失败：") + message);
+        window->showBubbleMessage(QStringLiteral("AI 回复失败：") + userVisibleErrorMessage(response));
     });
+}
+
+void PetWindow::clearConversation()
+{
+    if (!m_conversationManager)
+    {
+        return;
+    }
+
+    const bool hadActiveRequest = hasActiveAIRequest();
+    if (m_aiTestProvider && m_aiTestProvider->isBusy())
+    {
+        m_aiTestProvider->cancel();
+    }
+
+    m_conversationManager->clear();
+    showBubbleMessage(hadActiveRequest
+        ? QStringLiteral("已取消 AI 请求，并清空对话。")
+        : QStringLiteral("对话已清空。"));
+    playState(QStringLiteral("idle"), false);
+}
+
+void PetWindow::cancelActiveAIRequest()
+{
+    bool canceled = false;
+    if (m_aiTestProvider && m_aiTestProvider->isBusy())
+    {
+        m_aiTestProvider->cancel();
+        canceled = true;
+    }
+
+    if (m_conversationManager && m_conversationManager->isBusy())
+    {
+        m_conversationManager->cancel();
+        canceled = true;
+    }
+
+    if (!canceled)
+    {
+        showBubbleMessage(QStringLiteral("没有正在进行的 AI 请求。"));
+        return;
+    }
+
+    showBubbleMessage(QStringLiteral("AI 请求已取消。"));
+    playState(QStringLiteral("idle"), false);
+}
+
+bool PetWindow::hasActiveAIRequest() const
+{
+    return (m_aiTestProvider && m_aiTestProvider->isBusy())
+        || (m_conversationManager && m_conversationManager->isBusy());
 }
 
 void PetWindow::mouseMoveEvent(QMouseEvent *event)

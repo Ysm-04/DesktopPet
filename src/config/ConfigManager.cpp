@@ -8,6 +8,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QJsonValue>
 #include <QStandardPaths>
 
 namespace
@@ -34,10 +35,16 @@ QJsonObject performanceObjectFromConfig(const AppConfig &config)
     return performance;
 }
 
-QJsonObject objectFromAIConfig(const AIConfig &config)
+QString normalizedProviderName(const QString &provider)
+{
+    const QString normalized = provider.trimmed().toLower();
+    return normalized.isEmpty() ? QStringLiteral("custom") : normalized;
+}
+
+QJsonObject objectFromAIProviderConfig(const AIConfig &config)
 {
     QJsonObject root;
-    root.insert(QStringLiteral("provider"), config.provider);
+    root.insert(QStringLiteral("provider"), normalizedProviderName(config.provider));
     root.insert(QStringLiteral("protocol"), config.protocol);
     root.insert(QStringLiteral("baseUrl"), config.baseUrl);
     root.insert(QStringLiteral("model"), config.model);
@@ -54,6 +61,57 @@ QJsonObject objectFromAIConfig(const AIConfig &config)
     root.insert(QStringLiteral("temperature"), config.temperature);
     root.insert(QStringLiteral("maxTokens"), config.maxTokens);
     return root;
+}
+
+QJsonObject objectFromAIConfigStore(const AIConfigStore &store)
+{
+    QJsonObject providers;
+    for (auto iterator = store.providers.constBegin(); iterator != store.providers.constEnd(); ++iterator)
+    {
+        const QString provider = normalizedProviderName(iterator.key());
+        AIConfig config = iterator.value();
+        config.provider = provider;
+        providers.insert(provider, objectFromAIProviderConfig(config));
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("activeProvider"), normalizedProviderName(store.activeProvider));
+    root.insert(QStringLiteral("providers"), providers);
+    return root;
+}
+
+AIConfig aiProviderConfigFromObject(const QString &provider, const QJsonObject &root)
+{
+    AIConfig config = defaultAIConfigForProvider(provider);
+    config.provider = provider;
+    config.protocol = root.value(QStringLiteral("protocol")).toString(config.protocol);
+    config.baseUrl = root.value(QStringLiteral("baseUrl")).toString(config.baseUrl);
+    config.model = root.value(QStringLiteral("model")).toString(config.model);
+    config.path = root.value(QStringLiteral("path")).toString(config.path);
+    config.apiKeyStorage = root.value(QStringLiteral("apiKeyStorage")).toString(config.apiKeyStorage);
+    config.apiKeyEncrypted = root.value(QStringLiteral("apiKeyEncrypted")).toString(config.apiKeyEncrypted);
+    config.allowPlainApiKey = root.value(QStringLiteral("allowPlainApiKey")).toBool(config.allowPlainApiKey);
+    if (config.allowPlainApiKey && config.apiKeyStorage == QStringLiteral("plain-json"))
+    {
+        config.apiKey = root.value(QStringLiteral("apiKey")).toString(config.apiKey);
+    }
+    config.stream = root.value(QStringLiteral("stream")).toBool(config.stream);
+    config.timeoutMs = root.value(QStringLiteral("timeoutMs")).toInt(config.timeoutMs);
+    config.temperature = root.value(QStringLiteral("temperature")).toDouble(config.temperature);
+    config.maxTokens = root.value(QStringLiteral("maxTokens")).toInt(config.maxTokens);
+    return config;
+}
+
+AIConfig activeAIProviderConfig(const AIConfigStore &store)
+{
+    const QString activeProvider = normalizedProviderName(store.activeProvider);
+    const auto iterator = store.providers.constFind(activeProvider);
+    if (iterator != store.providers.constEnd())
+    {
+        return iterator.value();
+    }
+
+    return defaultAIConfigForProvider(activeProvider);
 }
 }
 
@@ -124,20 +182,20 @@ AppConfig ConfigManager::loadAppConfig() const
     return config;
 }
 
-AIConfig ConfigManager::loadAIConfig() const
+AIConfigStore ConfigManager::loadAIConfigStore() const
 {
-    AIConfig config;
+    AIConfigStore store;
 
     QFile file(aiConfigPath());
     if (!file.exists())
     {
-        return config;
+        return store;
     }
 
     if (!file.open(QIODevice::ReadOnly))
     {
         Logger::warning(QStringLiteral("Unable to read AI config."));
-        return config;
+        return store;
     }
 
     QJsonParseError parseError;
@@ -147,27 +205,30 @@ AIConfig ConfigManager::loadAIConfig() const
         file.close();
         backupBrokenConfig(aiConfigPath());
         Logger::warning(QStringLiteral("AI config is broken; default config will be used."));
-        return config;
+        return store;
     }
 
     const QJsonObject root = document.object();
-    config.provider = root.value(QStringLiteral("provider")).toString(config.provider);
-    config.protocol = root.value(QStringLiteral("protocol")).toString(root.value(QStringLiteral("providerType")).toString(config.protocol));
-    config.baseUrl = root.value(QStringLiteral("baseUrl")).toString(config.baseUrl);
-    config.model = root.value(QStringLiteral("model")).toString(config.model);
-    config.path = root.value(QStringLiteral("path")).toString(config.path);
-    config.apiKeyStorage = root.value(QStringLiteral("apiKeyStorage")).toString(config.apiKeyStorage);
-    config.apiKeyEncrypted = root.value(QStringLiteral("apiKeyEncrypted")).toString(config.apiKeyEncrypted);
-    config.allowPlainApiKey = root.value(QStringLiteral("allowPlainApiKey")).toBool(config.allowPlainApiKey);
-    if (config.allowPlainApiKey && config.apiKeyStorage == QStringLiteral("plain-json"))
+    store.activeProvider = normalizedProviderName(root.value(QStringLiteral("activeProvider")).toString(store.activeProvider));
+
+    const QJsonObject providers = root.value(QStringLiteral("providers")).toObject();
+    for (auto iterator = providers.constBegin(); iterator != providers.constEnd(); ++iterator)
     {
-        config.apiKey = root.value(QStringLiteral("apiKey")).toString(config.apiKey);
+        if (!iterator.value().isObject())
+        {
+            continue;
+        }
+
+        const QString provider = normalizedProviderName(iterator.key());
+        store.providers.insert(provider, aiProviderConfigFromObject(provider, iterator.value().toObject()));
     }
-    config.stream = root.value(QStringLiteral("stream")).toBool(config.stream);
-    config.timeoutMs = root.value(QStringLiteral("timeoutMs")).toInt(config.timeoutMs);
-    config.temperature = root.value(QStringLiteral("temperature")).toDouble(config.temperature);
-    config.maxTokens = root.value(QStringLiteral("maxTokens")).toInt(config.maxTokens);
-    return config;
+
+    return store;
+}
+
+AIConfig ConfigManager::loadAIConfig() const
+{
+    return activeAIProviderConfig(loadAIConfigStore());
 }
 
 bool ConfigManager::saveAppConfig(const AppConfig &config) const
@@ -195,7 +256,7 @@ bool ConfigManager::saveAppConfig(const AppConfig &config) const
     return file.write(document.toJson(QJsonDocument::Indented)) >= 0;
 }
 
-bool ConfigManager::saveAIConfig(const AIConfig &config) const
+bool ConfigManager::saveAIConfigStore(const AIConfigStore &store) const
 {
     const QString directoryPath = configDirectoryPath();
     QDir directory(directoryPath);
@@ -212,8 +273,19 @@ bool ConfigManager::saveAIConfig(const AIConfig &config) const
         return false;
     }
 
-    const QJsonDocument document(objectFromAIConfig(config));
+    const QJsonDocument document(objectFromAIConfigStore(store));
     return file.write(document.toJson(QJsonDocument::Indented)) >= 0;
+}
+
+bool ConfigManager::saveAIConfig(const AIConfig &config) const
+{
+    AIConfig normalizedConfig = config;
+    normalizedConfig.provider = normalizedProviderName(normalizedConfig.provider);
+
+    AIConfigStore store = loadAIConfigStore();
+    store.activeProvider = normalizedConfig.provider;
+    store.providers.insert(normalizedConfig.provider, normalizedConfig);
+    return saveAIConfigStore(store);
 }
 
 QString ConfigManager::appConfigPath() const

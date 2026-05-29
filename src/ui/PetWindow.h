@@ -17,6 +17,7 @@ class QMenu;
 class QMoveEvent;
 class QPixmap;
 class ChatBubble;
+class ConversationManager;
 class LLMProvider;
 class PetView;
 
@@ -44,6 +45,10 @@ private:
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
     void startAITest();
+    void startChat();
+    void clearConversation();
+    void cancelActiveAIRequest();
+    bool hasActiveAIRequest() const;
     void updateBubblePosition();
     QPoint bubbleAnchorPosition() const;
     void playState(const QString &stateName, bool centerWindow);
@@ -57,7 +62,8 @@ private:
     void setAlwaysOnTop(bool enabled);
 
     std::unique_ptr<ChatBubble> m_chatBubble;
-    std::unique_ptr<LLMProvider> m_aiProvider;
+    std::unique_ptr<ConversationManager> m_conversationManager;
+    std::unique_ptr<LLMProvider> m_aiTestProvider;
     PetView *m_petView;
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;

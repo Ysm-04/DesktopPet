@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMap>
 #include <QString>
 
 struct AIConfig
@@ -17,6 +18,12 @@ struct AIConfig
     int timeoutMs = 60000;
     double temperature = 0.7;
     int maxTokens = 1024;
+};
+
+struct AIConfigStore
+{
+    QString activeProvider = QStringLiteral("custom");
+    QMap<QString, AIConfig> providers;
 };
 
 AIConfig defaultAIConfigForProvider(const QString &provider);

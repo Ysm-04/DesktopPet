@@ -13,12 +13,16 @@ class QSpinBox;
 class SettingsDialog : public QDialog
 {
 public:
-    explicit SettingsDialog(const AIConfig &config, QWidget *parent = nullptr);
+    explicit SettingsDialog(const AIConfigStore &configStore, QWidget *parent = nullptr);
 
-    AIConfig aiConfig() const;
+    AIConfigStore aiConfigStore() const;
 
 private:
-    void applyProviderPreset(const QString &provider);
+    void cacheCurrentProvider();
+    void loadProviderConfig(const QString &provider);
+    void switchProvider(const QString &provider);
+    AIConfig configFromForm(const QString &provider) const;
+    QString decryptedApiKey(const AIConfig &config) const;
 
     QComboBox *m_providerComboBox = nullptr;
     QLineEdit *m_baseUrlEdit = nullptr;
@@ -29,5 +33,6 @@ private:
     QDoubleSpinBox *m_temperatureSpinBox = nullptr;
     QSpinBox *m_maxTokensSpinBox = nullptr;
     QCheckBox *m_allowPlainApiKeyCheckBox = nullptr;
-    AIConfig m_initialConfig;
+    AIConfigStore m_configStore;
+    QString m_currentProvider;
 };
