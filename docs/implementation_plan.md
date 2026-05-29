@@ -553,8 +553,9 @@ error ：20 帧
    当前尚未形成自动化性能测试或长期压测记录
 
 8. 阶段 6 AI 接入：
-   已新增 LLMProvider / OpenAICompatibleProvider / ConversationManager
+   已新增 LLMProvider / OpenAICompatibleProvider / GoogleGeminiProvider / ConversationManager
    已支持 OpenAI Compatible 异步请求、超时、取消、错误提示和网络诊断日志
+   已支持 Google Gemini generateContent / streamGenerateContent、x-goog-api-key、contents 多轮上下文和 systemInstruction
    已支持 SSE 流式输出，气泡中流式显示，历史面板只记录最终对话
    已限制同一时间只允许一个 AI 请求
    已避免在日志中输出完整 API Key 和完整消息正文
@@ -563,7 +564,8 @@ error ：20 帧
    已新增 ChatBubble、ChatInputDialog、ChatHistoryPanel、SettingsDialog
    已支持右键聊天、显示对话、取消 AI 请求、清空对话、设置
    已删除临时 AI 测试入口和气泡测试入口
-   已支持 OpenAI / Google / Claude / DeepSeek / Custom 配置分 Provider 保存
+   已支持 OpenAI / Google / DeepSeek / Custom 配置分 Provider 保存
+   已移除废弃 Provider 配置入口，并在读取旧配置时清理废弃 Provider 配置
    Windows 下 API Key 使用 DPAPI 加密保存，非 Windows 需用户确认后才允许明文保存
 ```
 
@@ -571,14 +573,12 @@ error ：20 帧
 
 ```text
 1. shiroko 角色包仍位于项目根目录 shiroko/，尚未移动到 resources/characters/shiroko
-2. Google / Claude 目前只有配置入口，正式聊天运行时仍只接入 openai-compatible 协议
-3. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、应用设置、角色选择、缩放和性能模式 UI
-4. ConfigManager 已有缩放和性能字段，但 PetWindow 尚未真正应用缩放、性能模式和角色选择
-5. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
-6. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
-7. 当前 FrameAnimator 采用当前角色包全部状态帧预加载，尚未做懒加载
-8. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
-9. 最近一次流式状态修正已本地提交，推送时遇到远程认证失败，需要重新认证后推送
+2. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、应用设置、角色选择、缩放和性能模式 UI
+3. ConfigManager 已有缩放和性能字段，但 PetWindow 尚未真正应用缩放、性能模式和角色选择
+4. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
+5. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
+6. 当前 FrameAnimator 采用当前角色包全部状态帧预加载，尚未做懒加载
+7. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
 ```
 
 ---
@@ -588,7 +588,11 @@ error ：20 帧
 短期建议：
 
 ```text
-1. 解决远程仓库认证问题，并推送本地提交
+1. 用户手测 Google Gemini Provider：
+   - Google Provider 配置保存
+   - Gemini 普通回复
+   - Gemini 流式回复
+   - 错误 Key / 错误模型错误提示
 2. 用户手测流式状态修正：
    - 发送消息后等待阶段应保持 think
    - 等待阶段拖动松开应回到 think
@@ -623,11 +627,9 @@ error ：20 帧
 后续开始写代码前，需要逐项确认：
 
 ```text
-1. 远程仓库认证失败，当前本地提交尚未推送成功
-2. 是否把 shiroko 移动到 resources/characters/shiroko
-3. 是否保持当前“预加载全部当前角色状态帧”的策略，还是改成按状态懒加载
-4. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-5. Google / Claude 是先禁用正式聊天提示，还是继续实现原生 Provider
-6. 设置页下一步先做 AI 测试入口，还是先做应用缩放 / 性能设置
-7. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
+1. 是否把 shiroko 移动到 resources/characters/shiroko
+2. 是否保持当前“预加载全部当前角色状态帧”的策略，还是改成按状态懒加载
+3. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
+4. 设置页下一步先做 AI 测试入口，还是先做应用缩放 / 性能设置
+5. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
 ```

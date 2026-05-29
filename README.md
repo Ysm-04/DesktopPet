@@ -27,10 +27,10 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - AI 回复气泡
 - 对话历史面板
 - AI 请求取消和对话清空
+- Google Gemini 原生聊天请求
 
 尚未实现：
 
-- Google / Claude 原生协议 Provider
 - 设置页内 AI 连通性测试
 - 缩放和性能模式 UI
 - AppConfig 中缩放 / 性能字段的实际应用
@@ -132,15 +132,14 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 
 ## AI 配置和聊天
 
-当前正式聊天使用 OpenAI Compatible 协议。已提供以下 Provider 配置入口：
+当前正式聊天支持 OpenAI Compatible 和 Google Gemini 两类协议。已提供以下 Provider 配置入口：
 
 - OpenAI
 - Google
-- Claude
 - DeepSeek
 - Custom
 
-其中 OpenAI、DeepSeek、Custom 走 OpenAI Compatible 形式配置。Google 和 Claude 当前主要是配置预留，正式聊天运行时还未接入对应原生协议。
+其中 OpenAI、DeepSeek、Custom 走 OpenAI Compatible 形式配置；Google 走 Gemini 原生 REST 接口。旧版保存过的已废弃 Provider 配置会在读取 AI 配置时清理，废弃 Provider 被选中时会回退为 `custom`。
 
 已支持：
 
@@ -150,6 +149,7 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 - 用户自定义 Path
 - 超时、Temperature、Max Tokens
 - 流式输出
+- Google Gemini `generateContent` / `streamGenerateContent`
 - 请求中切换 `think`
 - 收到首段输出后切换并保持 `talk`
 - 失败时切换 `error`

@@ -1,6 +1,7 @@
 #include "PetWindow.h"
 
 #include "../ai/ConversationManager.h"
+#include "../ai/GoogleGeminiProvider.h"
 #include "../ai/OpenAICompatibleProvider.h"
 #include "../character/CharacterPackageLoader.h"
 #include "../config/ConfigManager.h"
@@ -82,7 +83,9 @@ bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 
 bool prepareRuntimeAIConfig(AIConfig &config, QString *errorMessage)
 {
-    if (config.protocol != QStringLiteral("openai-compatible"))
+    const bool supportedProtocol = config.protocol == QStringLiteral("openai-compatible")
+        || config.protocol == QStringLiteral("google-generative-language");
+    if (!supportedProtocol)
     {
         *errorMessage = QStringLiteral("当前 Provider 协议暂未接入。");
         return false;
@@ -106,6 +109,21 @@ bool prepareRuntimeAIConfig(AIConfig &config, QString *errorMessage)
     }
 
     return true;
+}
+
+std::unique_ptr<LLMProvider> createProvider(const AIConfig &config)
+{
+    if (config.protocol == QStringLiteral("google-generative-language"))
+    {
+        return std::make_unique<GoogleGeminiProvider>(config);
+    }
+
+    if (config.protocol == QStringLiteral("openai-compatible"))
+    {
+        return std::make_unique<OpenAICompatibleProvider>(config);
+    }
+
+    return nullptr;
 }
 
 QString userVisibleErrorMessage(const ChatResponse &response)
@@ -333,7 +351,15 @@ bool PetWindow::submitChatMessage(const QString &message)
         return false;
     }
 
-    if (!m_conversationManager->setProvider(std::make_unique<OpenAICompatibleProvider>(config)))
+    std::unique_ptr<LLMProvider> provider = createProvider(config);
+    if (!provider)
+    {
+        playState(QStringLiteral("error"), false);
+        showBubbleMessage(QStringLiteral("当前 Provider 协议暂未接入。"));
+        return false;
+    }
+
+    if (!m_conversationManager->setProvider(std::move(provider)))
     {
         showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
         return false;

@@ -41,6 +41,13 @@ QString normalizedProviderName(const QString &provider)
     return normalized.isEmpty() ? QStringLiteral("custom") : normalized;
 }
 
+bool isRemovedProviderName(const QString &provider)
+{
+    const QString normalized = provider.trimmed().toLower();
+    return normalized == QStringLiteral("claude")
+        || normalized == QStringLiteral("calude");
+}
+
 QJsonObject objectFromAIProviderConfig(const AIConfig &config)
 {
     QJsonObject root;
@@ -69,13 +76,21 @@ QJsonObject objectFromAIConfigStore(const AIConfigStore &store)
     for (auto iterator = store.providers.constBegin(); iterator != store.providers.constEnd(); ++iterator)
     {
         const QString provider = normalizedProviderName(iterator.key());
+        if (isRemovedProviderName(provider))
+        {
+            continue;
+        }
+
         AIConfig config = iterator.value();
         config.provider = provider;
         providers.insert(provider, objectFromAIProviderConfig(config));
     }
 
     QJsonObject root;
-    root.insert(QStringLiteral("activeProvider"), normalizedProviderName(store.activeProvider));
+    const QString activeProvider = normalizedProviderName(store.activeProvider);
+    root.insert(
+        QStringLiteral("activeProvider"),
+        isRemovedProviderName(activeProvider) ? QStringLiteral("custom") : activeProvider);
     root.insert(QStringLiteral("providers"), providers);
     return root;
 }
@@ -210,6 +225,12 @@ AIConfigStore ConfigManager::loadAIConfigStore() const
 
     const QJsonObject root = document.object();
     store.activeProvider = normalizedProviderName(root.value(QStringLiteral("activeProvider")).toString(store.activeProvider));
+    bool removedLegacyProviderConfig = false;
+    if (isRemovedProviderName(store.activeProvider))
+    {
+        store.activeProvider = QStringLiteral("custom");
+        removedLegacyProviderConfig = true;
+    }
 
     const QJsonObject providers = root.value(QStringLiteral("providers")).toObject();
     for (auto iterator = providers.constBegin(); iterator != providers.constEnd(); ++iterator)
@@ -220,7 +241,22 @@ AIConfigStore ConfigManager::loadAIConfigStore() const
         }
 
         const QString provider = normalizedProviderName(iterator.key());
+        const QString declaredProvider = normalizedProviderName(
+            iterator.value().toObject().value(QStringLiteral("provider")).toString(provider));
+        if (isRemovedProviderName(provider) || isRemovedProviderName(declaredProvider))
+        {
+            removedLegacyProviderConfig = true;
+            continue;
+        }
+
         store.providers.insert(provider, aiProviderConfigFromObject(provider, iterator.value().toObject()));
+    }
+
+    if (removedLegacyProviderConfig)
+    {
+        file.close();
+        Logger::info(QStringLiteral("Removed legacy AI provider config."));
+        saveAIConfigStore(store);
     }
 
     return store;
@@ -281,6 +317,10 @@ bool ConfigManager::saveAIConfig(const AIConfig &config) const
 {
     AIConfig normalizedConfig = config;
     normalizedConfig.provider = normalizedProviderName(normalizedConfig.provider);
+    if (isRemovedProviderName(normalizedConfig.provider))
+    {
+        normalizedConfig = defaultAIConfigForProvider(QStringLiteral("custom"));
+    }
 
     AIConfigStore store = loadAIConfigStore();
     store.activeProvider = normalizedConfig.provider;

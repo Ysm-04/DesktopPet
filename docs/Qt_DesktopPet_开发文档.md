@@ -1663,6 +1663,7 @@ Windows 优先
 PNG 多状态帧动画角色包
 轻量状态机
 OpenAI Compatible 自定义 AI 接口
+Google Gemini 原生 AI 接口
 AI 对话与桌宠动画联动
 SSE 流式输出
 聊天输入框、回复气泡和对话历史面板
@@ -1682,10 +1683,9 @@ MIT License 开源
 
 ```text
 1. 设置页内 AI 连通性测试
-2. Google / Claude 原生协议 Provider，或在 UI 中明确提示暂未接入
-3. 对话历史内存上限和可选持久化
-4. AppConfig 中缩放、性能模式等字段的实际应用
-5. character.json 中 base、anchor、bubble offset 的解析与应用
-6. 角色包位置整理、角色切换和懒加载策略
-7. 发布前素材授权确认与打包验证
+2. 对话历史内存上限和可选持久化
+3. AppConfig 中缩放、性能模式等字段的实际应用
+4. character.json 中 base、anchor、bubble offset 的解析与应用
+5. 角色包位置整理、角色切换和懒加载策略
+6. 发布前素材授权确认与打包验证
 ```

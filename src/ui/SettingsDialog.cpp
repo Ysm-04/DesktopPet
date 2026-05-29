@@ -19,6 +19,11 @@ namespace
 QString normalizedProviderName(const QString &provider)
 {
     const QString normalized = provider.trimmed().toLower();
+    if (normalized == QStringLiteral("claude") || normalized == QStringLiteral("calude"))
+    {
+        return QStringLiteral("custom");
+    }
+
     return normalized.isEmpty() ? QStringLiteral("custom") : normalized;
 }
 }
@@ -43,7 +48,6 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
     const QList<QPair<QString, QString>> providers = {
         {QStringLiteral("openai"), QStringLiteral("OpenAI")},
         {QStringLiteral("google"), QStringLiteral("Google")},
-        {QStringLiteral("claude"), QStringLiteral("Claude")},
         {QStringLiteral("deepseek"), QStringLiteral("DeepSeek")},
         {QStringLiteral("custom"), QStringLiteral("Custom")},
     };
@@ -106,6 +110,8 @@ SettingsDialog::SettingsDialog(const AIConfigStore &configStore, QWidget *parent
 AIConfigStore SettingsDialog::aiConfigStore() const
 {
     AIConfigStore store = m_configStore;
+    store.providers.remove(QStringLiteral("claude"));
+    store.providers.remove(QStringLiteral("calude"));
     const QString provider = normalizedProviderName(m_providerComboBox->currentData().toString());
     store.activeProvider = provider;
     store.providers.insert(provider, configFromForm(provider));

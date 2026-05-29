@@ -22,14 +22,6 @@ AIConfig defaultAIConfigForProvider(const QString &provider)
         return config;
     }
 
-    if (normalizedProvider == QStringLiteral("claude"))
-    {
-        config.protocol = QStringLiteral("anthropic");
-        config.baseUrl = QStringLiteral("https://api.anthropic.com");
-        config.path = QStringLiteral("/v1/messages");
-        return config;
-    }
-
     if (normalizedProvider == QStringLiteral("google"))
     {
         config.protocol = QStringLiteral("google-generative-language");
