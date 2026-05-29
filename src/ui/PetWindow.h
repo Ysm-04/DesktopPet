@@ -18,6 +18,7 @@ class QHideEvent;
 class QMoveEvent;
 class QPixmap;
 class ChatBubble;
+class ChatHistoryPanel;
 class ChatInputDialog;
 class ConversationManager;
 class LLMProvider;
@@ -54,6 +55,7 @@ private:
     void clearConversation();
     void cancelActiveAIRequest();
     void showConversationHistory();
+    void refreshChatHistoryPanel();
     bool hasActiveAIRequest() const;
     void resetBubbleAutoHideTimer();
     QPoint chatInputAnchorPosition() const;
@@ -70,6 +72,7 @@ private:
     void setAlwaysOnTop(bool enabled);
 
     std::unique_ptr<ChatBubble> m_chatBubble;
+    std::unique_ptr<ChatHistoryPanel> m_chatHistoryPanel;
     std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
     std::unique_ptr<LLMProvider> m_aiTestProvider;

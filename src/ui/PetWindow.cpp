@@ -7,6 +7,7 @@
 #include "../config/SecretStore.h"
 #include "../util/Logger.h"
 #include "ChatBubble.h"
+#include "ChatHistoryPanel.h"
 #include "ChatInputDialog.h"
 #include "PetView.h"
 #include "SettingsDialog.h"
@@ -122,47 +123,12 @@ QString userVisibleErrorMessage(const ChatResponse &response)
     return message;
 }
 
-QString roleLabel(const QString &role)
-{
-    if (role == QStringLiteral("user"))
-    {
-        return QStringLiteral("你");
-    }
-
-    if (role == QStringLiteral("assistant"))
-    {
-        return QStringLiteral("桌宠");
-    }
-
-    return role;
-}
-
-QString formattedConversationHistory(const QVector<ChatMessage> &history)
-{
-    if (history.isEmpty())
-    {
-        return QStringLiteral("暂无对话记录。");
-    }
-
-    QStringList lines;
-    for (const ChatMessage &message : history)
-    {
-        const QString content = message.content.trimmed();
-        if (content.isEmpty())
-        {
-            continue;
-        }
-
-        lines.append(roleLabel(message.role) + QStringLiteral("：") + content);
-    }
-
-    return lines.isEmpty() ? QStringLiteral("暂无对话记录。") : lines.join(QStringLiteral("\n\n"));
-}
 }
 
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
     , m_chatBubble(std::make_unique<ChatBubble>())
+    , m_chatHistoryPanel(std::make_unique<ChatHistoryPanel>(this))
     , m_chatInputDialog(std::make_unique<ChatInputDialog>(MaxUserMessageLength, this))
     , m_conversationManager(std::make_unique<ConversationManager>())
     , m_petView(new PetView(this))
@@ -467,6 +433,7 @@ bool PetWindow::submitChatMessage(const QString &message)
         {
             window->playState(QStringLiteral("talk"), false);
             window->showBubbleMessage(response.content);
+            window->refreshChatHistoryPanel();
             return;
         }
 
@@ -491,6 +458,7 @@ void PetWindow::clearConversation()
     }
 
     m_conversationManager->clear();
+    refreshChatHistoryPanel();
     showBubbleMessage(hadActiveRequest
         ? QStringLiteral("已取消 AI 请求，并清空对话。")
         : QStringLiteral("对话已清空。"));
@@ -531,8 +499,19 @@ bool PetWindow::hasActiveAIRequest() const
 void PetWindow::showConversationHistory()
 {
     const QVector<ChatMessage> history = m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>();
-    m_chatBubble->showMessage(formattedConversationHistory(history), bubbleAnchorPosition(), 30000);
-    m_chatBubble->setDismissOnExternalInteraction(true);
+    m_chatHistoryPanel->setMessages(history);
+    m_chatHistoryPanel->showNear(frameGeometry());
+}
+
+void PetWindow::refreshChatHistoryPanel()
+{
+    if (!m_chatHistoryPanel || !m_chatHistoryPanel->isVisible())
+    {
+        return;
+    }
+
+    const QVector<ChatMessage> history = m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>();
+    m_chatHistoryPanel->setMessages(history);
 }
 
 void PetWindow::resetBubbleAutoHideTimer()
@@ -557,6 +536,10 @@ void PetWindow::hideEvent(QHideEvent *event)
     if (m_chatInputDialog)
     {
         m_chatInputDialog->hide();
+    }
+    if (m_chatHistoryPanel)
+    {
+        m_chatHistoryPanel->hide();
     }
 
     QWidget::hideEvent(event);
