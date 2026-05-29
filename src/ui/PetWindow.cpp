@@ -1,11 +1,9 @@
 #include "PetWindow.h"
 
 #include "../ai/ConversationManager.h"
-#include "../ai/GoogleGeminiProvider.h"
-#include "../ai/OpenAICompatibleProvider.h"
+#include "../ai/AIProviderFactory.h"
 #include "../character/CharacterPackageLoader.h"
 #include "../config/ConfigManager.h"
-#include "../config/SecretStore.h"
 #include "../util/Logger.h"
 #include "ChatBubble.h"
 #include "ChatHistoryPanel.h"
@@ -60,85 +58,6 @@ AppConfig normalizedAppConfig(AppConfig config)
         config.performanceMode = QStringLiteral("standard");
     }
     return config;
-}
-
-bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
-{
-    if (!config.apiKey.trimmed().isEmpty())
-    {
-        return true;
-    }
-
-    if (config.apiKeyStorage == QStringLiteral("windows-dpapi"))
-    {
-        if (config.apiKeyEncrypted.trimmed().isEmpty())
-        {
-            *errorMessage = QStringLiteral("请先在设置里配置 API Key。");
-            return false;
-        }
-
-        const SecretStore::Result result = SecretStore::unprotectText(config.apiKeyEncrypted);
-        if (!result.success)
-        {
-            *errorMessage = QStringLiteral("API Key 解密失败：") + result.errorMessage;
-            return false;
-        }
-
-        config.apiKey = result.value;
-    }
-
-    if (config.apiKey.trimmed().isEmpty())
-    {
-        *errorMessage = QStringLiteral("请先在设置里配置 API Key。");
-        return false;
-    }
-
-    return true;
-}
-
-bool prepareRuntimeAIConfig(AIConfig &config, QString *errorMessage)
-{
-    const bool supportedProtocol = config.protocol == QStringLiteral("openai-compatible")
-        || config.protocol == QStringLiteral("google-generative-language");
-    if (!supportedProtocol)
-    {
-        *errorMessage = QStringLiteral("当前 Provider 协议暂未接入。");
-        return false;
-    }
-
-    if (!populateRuntimeApiKey(config, errorMessage))
-    {
-        return false;
-    }
-
-    if (config.baseUrl.trimmed().isEmpty())
-    {
-        *errorMessage = QStringLiteral("请先在设置里配置 Base URL。");
-        return false;
-    }
-
-    if (config.model.trimmed().isEmpty())
-    {
-        *errorMessage = QStringLiteral("请先在设置里配置 Model。");
-        return false;
-    }
-
-    return true;
-}
-
-std::unique_ptr<LLMProvider> createProvider(const AIConfig &config)
-{
-    if (config.protocol == QStringLiteral("google-generative-language"))
-    {
-        return std::make_unique<GoogleGeminiProvider>(config);
-    }
-
-    if (config.protocol == QStringLiteral("openai-compatible"))
-    {
-        return std::make_unique<OpenAICompatibleProvider>(config);
-    }
-
-    return nullptr;
 }
 
 QString userVisibleErrorMessage(const ChatResponse &response)
@@ -289,6 +208,34 @@ void PetWindow::showBubbleMessage(const QString &message)
     m_chatBubble->showMessage(message, bubbleAnchorPosition());
 }
 
+void PetWindow::openSettingsDialog()
+{
+    ConfigManager configManager;
+    SettingsDialog dialog(configManager.loadAIConfigStore(), currentAppConfig(), [this]() {
+        return isManualStateSwitchLocked();
+    }, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return;
+    }
+
+    if (!configManager.saveAIConfigStore(dialog.aiConfigStore()))
+    {
+        Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
+    }
+
+    applyAppConfig(dialog.appConfig());
+    if (!configManager.saveAppConfig(currentAppConfig()))
+    {
+        Logger::warning(QStringLiteral("Failed to save app config from settings dialog."));
+    }
+}
+
+void PetWindow::setSettingsFallbackInContextMenuEnabled(bool enabled)
+{
+    m_settingsFallbackInContextMenuEnabled = enabled;
+}
+
 void PetWindow::contextMenuEvent(QContextMenuEvent *event)
 {
     resetBubbleAutoHideTimer();
@@ -307,7 +254,11 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     cancelAIAction->setEnabled(aiRequestRunning);
     QAction *clearConversationAction = menu.addAction(QStringLiteral("清空对话"));
     clearConversationAction->setEnabled(m_conversationManager && m_conversationManager->hasHistory());
-    QAction *settingsAction = menu.addAction(QStringLiteral("设置"));
+    QAction *settingsAction = nullptr;
+    if (m_settingsFallbackInContextMenuEnabled)
+    {
+        settingsAction = menu.addAction(QStringLiteral("设置"));
+    }
 
     addStateTestActions(&menu);
 
@@ -335,23 +286,9 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     {
         clearConversation();
     }
-    else if (selectedAction == settingsAction)
+    else if (settingsAction != nullptr && selectedAction == settingsAction)
     {
-        ConfigManager configManager;
-        SettingsDialog dialog(configManager.loadAIConfigStore(), currentAppConfig(), this);
-        if (dialog.exec() == QDialog::Accepted)
-        {
-            if (!configManager.saveAIConfigStore(dialog.aiConfigStore()))
-            {
-                Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
-            }
-
-            applyAppConfig(dialog.appConfig());
-            if (!configManager.saveAppConfig(currentAppConfig()))
-            {
-                Logger::warning(QStringLiteral("Failed to save app config from settings dialog."));
-            }
-        }
+        openSettingsDialog();
     }
     else if (selectedAction == exitAction)
     {
@@ -402,14 +339,14 @@ bool PetWindow::submitChatMessage(const QString &message)
     ConfigManager configManager;
     AIConfig config = configManager.loadAIConfig();
     QString errorMessage;
-    if (!prepareRuntimeAIConfig(config, &errorMessage))
+    if (!AIProviderFactory::prepareRuntimeConfig(config, &errorMessage))
     {
         playState(QStringLiteral("error"), false);
         showBubbleMessage(errorMessage);
         return false;
     }
 
-    std::unique_ptr<LLMProvider> provider = createProvider(config);
+    std::unique_ptr<LLMProvider> provider = AIProviderFactory::createProvider(config);
     if (!provider)
     {
         playState(QStringLiteral("error"), false);

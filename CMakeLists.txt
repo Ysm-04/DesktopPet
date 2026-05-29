@@ -14,6 +14,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_add_executable(QtDesktopPet
     main.cpp
+    src/ai/AIProviderFactory.h
+    src/ai/AIProviderFactory.cpp
     src/ai/ConversationManager.h
     src/ai/ConversationManager.cpp
     src/ai/LLMProvider.h

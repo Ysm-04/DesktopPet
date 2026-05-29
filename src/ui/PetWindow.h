@@ -31,6 +31,8 @@ public:
 
     void applyAppConfig(const AppConfig &config);
     AppConfig currentAppConfig() const;
+    void openSettingsDialog();
+    void setSettingsFallbackInContextMenuEnabled(bool enabled);
     void pauseAnimation();
     void resumeAnimation();
     void showBubbleMessage(const QString &message);
@@ -98,4 +100,5 @@ private:
     bool m_returnToIdleAfterResume = false;
     bool m_streamingChatActive = false;
     bool m_streamingTalkStarted = false;
+    bool m_settingsFallbackInContextMenuEnabled = true;
 };

@@ -70,6 +70,11 @@ void TrayController::createMenu()
         hidePetWindow();
     });
 
+    QAction *settingsAction = m_menu.addAction(QStringLiteral("设置..."));
+    QObject::connect(settingsAction, &QAction::triggered, [this]() {
+        openSettings();
+    });
+
     m_menu.addSeparator();
 
     QAction *quitAction = m_menu.addAction(QStringLiteral("退出"));
@@ -115,6 +120,16 @@ void TrayController::togglePetWindowVisibility()
     }
 
     showPetWindow();
+}
+
+void TrayController::openSettings()
+{
+    if (m_petWindow == nullptr)
+    {
+        return;
+    }
+
+    m_petWindow->openSettingsDialog();
 }
 
 void TrayController::quitApplication()

@@ -18,6 +18,7 @@ private:
     void showPetWindow();
     void hidePetWindow();
     void togglePetWindowVisibility();
+    void openSettings();
     void quitApplication();
 
     PetWindow *m_petWindow = nullptr;

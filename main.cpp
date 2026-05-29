@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
     window.applyAppConfig(configManager.loadAppConfig());
 
     TrayController trayController(&window);
+    window.setSettingsFallbackInContextMenuEnabled(!trayController.isAvailable());
     trayController.show();
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, [&configManager, &window]() {
