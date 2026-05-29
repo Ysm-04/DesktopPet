@@ -6,9 +6,92 @@
 #include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QStringList>
 #include <QUrl>
 
 #include <utility>
+
+namespace
+{
+QString trimmedResponseBody(const QByteArray &body)
+{
+    const QString text = QString::fromUtf8(body).trimmed();
+    constexpr int MaxErrorBodyLength = 1000;
+    if (text.size() <= MaxErrorBodyLength)
+    {
+        return text;
+    }
+
+    return text.left(MaxErrorBodyLength) + QStringLiteral("...");
+}
+
+QString errorMessageFromBody(const QByteArray &body)
+{
+    if (body.trimmed().isEmpty())
+    {
+        return {};
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+    {
+        return trimmedResponseBody(body);
+    }
+
+    const QJsonObject root = document.object();
+    QStringList details;
+
+    const QJsonValue errorValue = root.value(QStringLiteral("error"));
+    if (errorValue.isObject())
+    {
+        const QJsonObject error = errorValue.toObject();
+        const QString message = error.value(QStringLiteral("message")).toString().trimmed();
+        const QString code = error.value(QStringLiteral("code")).toString().trimmed();
+        const QString type = error.value(QStringLiteral("type")).toString().trimmed();
+
+        if (!message.isEmpty())
+        {
+            details.append(message);
+        }
+        if (!code.isEmpty())
+        {
+            details.append(QStringLiteral("code=") + code);
+        }
+        if (!type.isEmpty() && type != code)
+        {
+            details.append(QStringLiteral("type=") + type);
+        }
+    }
+    else if (errorValue.isString())
+    {
+        const QString error = errorValue.toString().trimmed();
+        if (!error.isEmpty())
+        {
+            details.append(error);
+        }
+    }
+
+    const QString message = root.value(QStringLiteral("message")).toString().trimmed();
+    if (!message.isEmpty() && !details.contains(message))
+    {
+        details.append(message);
+    }
+
+    const QString requestId = root.value(QStringLiteral("request_id")).toString().trimmed();
+    if (!requestId.isEmpty())
+    {
+        details.append(QStringLiteral("request_id=") + requestId);
+    }
+
+    if (!details.isEmpty())
+    {
+        return details.join(QStringLiteral("; "));
+    }
+
+    return trimmedResponseBody(body);
+}
+}
 
 OpenAICompatibleProvider::OpenAICompatibleProvider(const AIConfig &config)
     : m_config(config)
@@ -75,7 +158,7 @@ void OpenAICompatibleProvider::sendChatRequest(const ChatRequest &request, Respo
 
     const QJsonDocument document(buildPayload(request));
     m_currentReply = m_networkManager.post(networkRequest, document.toJson(QJsonDocument::Compact));
-    QObject::connect(m_currentReply, &QNetworkReply::finished, [this]() {
+    m_replyFinishedConnection = QObject::connect(m_currentReply, &QNetworkReply::finished, [this]() {
         if (m_currentReply.isNull())
         {
             return;
@@ -99,13 +182,14 @@ void OpenAICompatibleProvider::sendChatRequest(const ChatRequest &request, Respo
 
 void OpenAICompatibleProvider::cancel()
 {
-    if (!m_currentReply.isNull())
-    {
-        m_currentReply->abort();
-    }
-
-    clearReply();
     m_callback = nullptr;
+    QPointer<QNetworkReply> reply = m_currentReply;
+    clearReply();
+
+    if (!reply.isNull())
+    {
+        reply->abort();
+    }
 }
 
 QJsonObject OpenAICompatibleProvider::buildPayload(const ChatRequest &request) const
@@ -151,6 +235,12 @@ ChatResponse OpenAICompatibleProvider::parseResponse(QNetworkReply *reply, const
     const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (reply->error() != QNetworkReply::NoError)
     {
+        const QString bodyError = errorMessageFromBody(body);
+        if (!bodyError.isEmpty())
+        {
+            return {false, {}, bodyError, httpStatus};
+        }
+
         return {false, {}, reply->errorString(), httpStatus};
     }
 
@@ -180,12 +270,14 @@ ChatResponse OpenAICompatibleProvider::parseResponse(QNetworkReply *reply, const
 
 void OpenAICompatibleProvider::finishWithError(const QString &message, int httpStatus)
 {
-    if (!m_currentReply.isNull())
+    QPointer<QNetworkReply> reply = m_currentReply;
+    clearReply();
+
+    if (!reply.isNull())
     {
-        m_currentReply->abort();
+        reply->abort();
     }
 
-    clearReply();
     if (m_callback)
     {
         const ResponseCallback callback = std::move(m_callback);
@@ -197,6 +289,12 @@ void OpenAICompatibleProvider::finishWithError(const QString &message, int httpS
 void OpenAICompatibleProvider::clearReply()
 {
     m_timeoutTimer.stop();
+    if (m_replyFinishedConnection)
+    {
+        QObject::disconnect(m_replyFinishedConnection);
+        m_replyFinishedConnection = {};
+    }
+
     if (!m_currentReply.isNull())
     {
         m_currentReply->deleteLater();

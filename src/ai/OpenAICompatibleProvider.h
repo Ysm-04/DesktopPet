@@ -4,6 +4,7 @@
 #include "../config/AIConfig.h"
 
 #include <QJsonObject>
+#include <QMetaObject>
 #include <QNetworkAccessManager>
 #include <QPointer>
 #include <QTimer>
@@ -31,6 +32,7 @@ private:
     AIConfig m_config;
     QNetworkAccessManager m_networkManager;
     QPointer<QNetworkReply> m_currentReply;
+    QMetaObject::Connection m_replyFinishedConnection;
     QTimer m_timeoutTimer;
     ResponseCallback m_callback;
 };

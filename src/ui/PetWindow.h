@@ -17,6 +17,7 @@ class QMenu;
 class QMoveEvent;
 class QPixmap;
 class ChatBubble;
+class LLMProvider;
 class PetView;
 
 class PetWindow : public QWidget
@@ -42,6 +43,7 @@ private:
     void loadInitialImage();
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
+    void startAITest();
     void updateBubblePosition();
     QPoint bubbleAnchorPosition() const;
     void playState(const QString &stateName, bool centerWindow);
@@ -55,6 +57,7 @@ private:
     void setAlwaysOnTop(bool enabled);
 
     std::unique_ptr<ChatBubble> m_chatBubble;
+    std::unique_ptr<LLMProvider> m_aiProvider;
     PetView *m_petView;
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;
