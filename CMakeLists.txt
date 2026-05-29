@@ -10,10 +10,14 @@ set(CMAKE_AUTOMOC OFF)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_add_executable(QtDesktopPet
     main.cpp
+    src/ai/LLMProvider.h
+    src/ai/LLMTypes.h
+    src/ai/OpenAICompatibleProvider.h
+    src/ai/OpenAICompatibleProvider.cpp
     src/character/AnimationClip.h
     src/character/AnimationClip.cpp
     src/character/CharacterPackage.h
@@ -52,6 +56,7 @@ target_compile_definitions(QtDesktopPet
 
 target_link_libraries(QtDesktopPet
     PRIVATE
+        Qt6::Network
         Qt6::Widgets
 )
 
