@@ -11,7 +11,11 @@ class ChatBubble : public QWidget
 public:
     explicit ChatBubble(QWidget *parent = nullptr);
 
-    void showMessage(const QString &message, const QPoint &anchorPosition, int durationMs = 10000);
+    void showMessage(
+        const QString &message,
+        const QPoint &anchorPosition,
+        int durationMs = 10000,
+        bool scrollToBottom = false);
     void updateAnchorPosition(const QPoint &anchorPosition);
     void setDismissOnExternalInteraction(bool enabled);
     void resetAutoHideTimer();

@@ -44,6 +44,7 @@ QString previewImagePath()
 
 constexpr int MaxUserMessageLength = 4000;
 constexpr int ChatInputLowerOffsetY = 48;
+constexpr int StreamBubbleUpdateIntervalMs = 80;
 
 bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 {
@@ -163,6 +164,11 @@ PetWindow::PetWindow(QWidget *parent)
         returnToIdleFromBehavior();
     });
 
+    m_streamBubbleUpdateTimer.setSingleShot(true);
+    connect(&m_streamBubbleUpdateTimer, &QTimer::timeout, this, [this]() {
+        flushStreamingBubble(false);
+    });
+
     QPointer<PetWindow> window(this);
     m_chatInputDialog->setSubmitCallback([window](const QString &message) {
         return !window.isNull() && window->submitChatMessage(message);
@@ -231,14 +237,7 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     topAction->setCheckable(true);
     topAction->setChecked(m_alwaysOnTop);
 
-    QMenu *bubbleTestMenu = menu.addMenu(QStringLiteral("气泡测试"));
-    QAction *shortBubbleAction = bubbleTestMenu->addAction(QStringLiteral("短文本"));
-    QAction *maxBubbleAction = bubbleTestMenu->addAction(QStringLiteral("接近最大尺寸"));
-    QAction *scrollBubbleAction = bubbleTestMenu->addAction(QStringLiteral("超长滚动文本"));
-
     const bool aiRequestRunning = hasActiveAIRequest();
-    QAction *aiTestAction = menu.addAction(QStringLiteral("AI 测试"));
-    aiTestAction->setEnabled(!aiRequestRunning);
     QAction *chatAction = menu.addAction(QStringLiteral("聊天"));
     chatAction->setEnabled(!aiRequestRunning);
     QAction *showConversationAction = menu.addAction(QStringLiteral("显示对话"));
@@ -257,22 +256,6 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     if (selectedAction == topAction)
     {
         setAlwaysOnTop(!m_alwaysOnTop);
-    }
-    else if (selectedAction == shortBubbleAction)
-    {
-        showBubbleMessage(QStringLiteral("收到，马上处理。"));
-    }
-    else if (selectedAction == maxBubbleAction)
-    {
-        showBubbleMessage(QStringLiteral("这是一段用于测试气泡最大显示区域附近表现的文本。它应该自动换行，并在不出现滚动条的情况下尽量接近最大宽度和高度，方便观察边距、圆角、阴影和整体位置是否自然。"));
-    }
-    else if (selectedAction == scrollBubbleAction)
-    {
-        showBubbleMessage(QStringLiteral("这是一段用于测试超长 AI 回复的文本。第一段内容会让气泡快速达到最大高度，并触发垂直滚动条。用户应该可以通过滚动条查看后续内容，同时气泡本身不能继续无限变高。第二段内容继续补充更多文字，用来确认滚动区域、文本换行、右侧滚动条样式和顶部位置是否正常。第三段内容模拟模型输出较长解释时的情况：文本仍然需要保持清晰可读，不能遮挡整个桌面，也不能因为内容太多导致窗口尺寸失控。第四段内容用于确认自动隐藏计时仍然生效，并且再次打开气泡时滚动条会回到顶部。"));
-    }
-    else if (selectedAction == aiTestAction)
-    {
-        startAITest();
     }
     else if (selectedAction == chatAction)
     {
@@ -309,65 +292,8 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     }
 }
 
-void PetWindow::startAITest()
-{
-    if (m_aiTestProvider && m_aiTestProvider->isBusy())
-    {
-        showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
-        return;
-    }
-
-    if (m_conversationManager && m_conversationManager->isBusy())
-    {
-        showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
-        return;
-    }
-
-    ConfigManager configManager;
-    AIConfig config = configManager.loadAIConfig();
-    QString errorMessage;
-    if (!prepareRuntimeAIConfig(config, &errorMessage))
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(errorMessage);
-        return;
-    }
-
-    ChatRequest request;
-    request.messages.append({QStringLiteral("system"), QStringLiteral("你是桌宠的最小连通性测试助手。")});
-    request.messages.append({QStringLiteral("user"), QStringLiteral("请用一句话回复测试成功。")});
-
-    m_aiTestProvider = std::make_unique<OpenAICompatibleProvider>(config);
-    playState(QStringLiteral("think"), false);
-    showBubbleMessage(QStringLiteral("正在测试 AI 连接..."));
-
-    QPointer<PetWindow> window(this);
-    m_aiTestProvider->sendChatRequest(request, [window](const ChatResponse &response) {
-        if (window.isNull())
-        {
-            return;
-        }
-
-        if (response.success)
-        {
-            window->playState(QStringLiteral("talk"), false);
-            window->showBubbleMessage(response.content);
-            return;
-        }
-
-        window->playState(QStringLiteral("error"), false);
-        window->showBubbleMessage(QStringLiteral("AI 测试失败：") + userVisibleErrorMessage(response));
-    });
-}
-
 void PetWindow::startChat()
 {
-    if (m_aiTestProvider && m_aiTestProvider->isBusy())
-    {
-        showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
-        return;
-    }
-
     if (!m_chatInputDialog)
     {
         return;
@@ -378,12 +304,6 @@ void PetWindow::startChat()
 
 bool PetWindow::submitChatMessage(const QString &message)
 {
-    if (m_aiTestProvider && m_aiTestProvider->isBusy())
-    {
-        showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
-        return false;
-    }
-
     if (!m_conversationManager || m_conversationManager->isBusy())
     {
         showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
@@ -420,26 +340,39 @@ bool PetWindow::submitChatMessage(const QString &message)
     }
 
     playState(QStringLiteral("think"), false);
-    showBubbleMessage(QStringLiteral("正在思考..."));
+    m_streamingAssistantText.clear();
+    m_streamBubbleUpdateTimer.stop();
+    m_chatBubble->showMessage(QStringLiteral("正在思考..."), bubbleAnchorPosition(), 0);
 
     QPointer<PetWindow> window(this);
-    m_conversationManager->sendUserMessage(message, [window](const ChatResponse &response) {
-        if (window.isNull())
-        {
-            return;
-        }
+    m_conversationManager->sendUserMessageStreaming(
+        trimmedMessage,
+        [window](const QString &delta) {
+            if (!window.isNull())
+            {
+                window->handleChatStreamDelta(delta);
+            }
+        },
+        [window](const ChatResponse &response) {
+            if (window.isNull())
+            {
+                return;
+            }
 
-        if (response.success)
-        {
-            window->playState(QStringLiteral("talk"), false);
-            window->showBubbleMessage(response.content);
-            window->refreshChatHistoryPanel();
-            return;
-        }
+            window->m_streamBubbleUpdateTimer.stop();
+            if (response.success)
+            {
+                window->m_streamingAssistantText = response.content;
+                window->flushStreamingBubble(true);
+                window->playState(QStringLiteral("talk"), false);
+                window->refreshChatHistoryPanel();
+                return;
+            }
 
-        window->playState(QStringLiteral("error"), false);
-        window->showBubbleMessage(QStringLiteral("AI 回复失败：") + userVisibleErrorMessage(response));
-    });
+            window->m_streamingAssistantText.clear();
+            window->playState(QStringLiteral("error"), false);
+            window->showBubbleMessage(QStringLiteral("AI 回复失败：") + userVisibleErrorMessage(response));
+        });
 
     return true;
 }
@@ -452,12 +385,9 @@ void PetWindow::clearConversation()
     }
 
     const bool hadActiveRequest = hasActiveAIRequest();
-    if (m_aiTestProvider && m_aiTestProvider->isBusy())
-    {
-        m_aiTestProvider->cancel();
-    }
-
     m_conversationManager->clear();
+    m_streamBubbleUpdateTimer.stop();
+    m_streamingAssistantText.clear();
     refreshChatHistoryPanel();
     showBubbleMessage(hadActiveRequest
         ? QStringLiteral("已取消 AI 请求，并清空对话。")
@@ -467,33 +397,22 @@ void PetWindow::clearConversation()
 
 void PetWindow::cancelActiveAIRequest()
 {
-    bool canceled = false;
-    if (m_aiTestProvider && m_aiTestProvider->isBusy())
-    {
-        m_aiTestProvider->cancel();
-        canceled = true;
-    }
-
     if (m_conversationManager && m_conversationManager->isBusy())
     {
         m_conversationManager->cancel();
-        canceled = true;
-    }
-
-    if (!canceled)
-    {
-        showBubbleMessage(QStringLiteral("没有正在进行的 AI 请求。"));
+        m_streamBubbleUpdateTimer.stop();
+        m_streamingAssistantText.clear();
+        showBubbleMessage(QStringLiteral("AI 请求已取消。"));
+        playState(QStringLiteral("idle"), false);
         return;
     }
 
-    showBubbleMessage(QStringLiteral("AI 请求已取消。"));
-    playState(QStringLiteral("idle"), false);
+    showBubbleMessage(QStringLiteral("没有正在进行的 AI 请求。"));
 }
 
 bool PetWindow::hasActiveAIRequest() const
 {
-    return (m_aiTestProvider && m_aiTestProvider->isBusy())
-        || (m_conversationManager && m_conversationManager->isBusy());
+    return m_conversationManager && m_conversationManager->isBusy();
 }
 
 void PetWindow::showConversationHistory()
@@ -514,6 +433,39 @@ void PetWindow::refreshChatHistoryPanel()
     m_chatHistoryPanel->setMessages(history);
 }
 
+void PetWindow::handleChatStreamDelta(const QString &delta)
+{
+    if (delta.isEmpty())
+    {
+        return;
+    }
+
+    m_streamingAssistantText += delta;
+    if (!isVisible())
+    {
+        return;
+    }
+
+    if (!m_streamBubbleUpdateTimer.isActive())
+    {
+        m_streamBubbleUpdateTimer.start(StreamBubbleUpdateIntervalMs);
+    }
+}
+
+void PetWindow::flushStreamingBubble(bool finalUpdate)
+{
+    if (!isVisible() || m_streamingAssistantText.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    m_chatBubble->showMessage(
+        m_streamingAssistantText,
+        bubbleAnchorPosition(),
+        finalUpdate ? 10000 : 0,
+        true);
+}
+
 void PetWindow::resetBubbleAutoHideTimer()
 {
     if (m_chatBubble)
@@ -529,6 +481,7 @@ QPoint PetWindow::chatInputAnchorPosition() const
 
 void PetWindow::hideEvent(QHideEvent *event)
 {
+    m_streamBubbleUpdateTimer.stop();
     if (m_chatBubble)
     {
         m_chatBubble->hideBubble();

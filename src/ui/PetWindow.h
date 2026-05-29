@@ -21,7 +21,6 @@ class ChatBubble;
 class ChatHistoryPanel;
 class ChatInputDialog;
 class ConversationManager;
-class LLMProvider;
 class PetView;
 
 class PetWindow : public QWidget
@@ -49,13 +48,14 @@ private:
     void loadInitialImage();
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
-    void startAITest();
     void startChat();
     bool submitChatMessage(const QString &message);
     void clearConversation();
     void cancelActiveAIRequest();
     void showConversationHistory();
     void refreshChatHistoryPanel();
+    void handleChatStreamDelta(const QString &delta);
+    void flushStreamingBubble(bool finalUpdate);
     bool hasActiveAIRequest() const;
     void resetBubbleAutoHideTimer();
     QPoint chatInputAnchorPosition() const;
@@ -75,15 +75,16 @@ private:
     std::unique_ptr<ChatHistoryPanel> m_chatHistoryPanel;
     std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
-    std::unique_ptr<LLMProvider> m_aiTestProvider;
     PetView *m_petView;
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;
+    QTimer m_streamBubbleUpdateTimer;
     CharacterPackage m_characterPackage;
     QMap<QString, AnimationClip> m_clips;
     FrameAnimator m_frameAnimator;
     PetStateMachine m_stateMachine;
     QPoint m_dragOffset;
+    QString m_streamingAssistantText;
     bool m_dragging;
     bool m_alwaysOnTop;
     bool m_centerNextFrame;

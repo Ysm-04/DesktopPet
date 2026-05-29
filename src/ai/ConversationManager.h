@@ -11,6 +11,7 @@ class ConversationManager
 {
 public:
     using ResponseCallback = LLMProvider::ResponseCallback;
+    using StreamCallback = LLMProvider::StreamCallback;
 
     ConversationManager();
     ~ConversationManager();
@@ -20,6 +21,7 @@ public:
     QVector<ChatMessage> history() const;
     bool setProvider(std::unique_ptr<LLMProvider> provider);
     void sendUserMessage(const QString &message, ResponseCallback callback);
+    void sendUserMessageStreaming(const QString &message, StreamCallback streamCallback, ResponseCallback callback);
     void cancel();
     void clear();
 

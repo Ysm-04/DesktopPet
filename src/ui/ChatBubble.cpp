@@ -69,14 +69,13 @@ ChatBubble::ChatBubble(QWidget *parent)
     });
 }
 
-void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs)
+void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs, bool scrollToBottom)
 {
     m_dismissOnExternalInteraction = false;
     m_anchorPosition = anchorPosition;
     m_autoHideDurationMs = durationMs;
     const QString trimmed = message.trimmed();
     m_textEdit->setPlainText(trimmed);
-    m_textEdit->verticalScrollBar()->setValue(0);
 
     const QSize bubbleSize = preferredBubbleSize(trimmed);
     m_textEdit->setFixedSize(bubbleSize);
@@ -84,9 +83,16 @@ void ChatBubble::showMessage(const QString &message, const QPoint &anchorPositio
     updatePosition();
     show();
 
+    m_textEdit->verticalScrollBar()->setValue(
+        scrollToBottom ? m_textEdit->verticalScrollBar()->maximum() : 0);
+
     if (durationMs > 0)
     {
         m_hideTimer.start(durationMs);
+    }
+    else
+    {
+        m_hideTimer.stop();
     }
 }
 

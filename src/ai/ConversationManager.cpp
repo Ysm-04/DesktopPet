@@ -83,6 +83,53 @@ void ConversationManager::sendUserMessage(const QString &message, ResponseCallba
     });
 }
 
+void ConversationManager::sendUserMessageStreaming(const QString &message, StreamCallback streamCallback, ResponseCallback callback)
+{
+    const QString content = message.trimmed();
+    if (content.isEmpty())
+    {
+        if (callback)
+        {
+            callback({false, {}, QStringLiteral("Message is empty."), 0});
+        }
+        return;
+    }
+
+    if (!m_provider)
+    {
+        if (callback)
+        {
+            callback({false, {}, QStringLiteral("AI provider is not ready."), 0});
+        }
+        return;
+    }
+
+    if (isBusy())
+    {
+        if (callback)
+        {
+            callback({false, {}, QStringLiteral("AI request is already running."), 0});
+        }
+        return;
+    }
+
+    const ChatMessage userMessage{QStringLiteral("user"), content};
+    m_provider->sendStreamingChatRequest(
+        buildRequest(userMessage),
+        std::move(streamCallback),
+        [this, userMessage, callback = std::move(callback)](const ChatResponse &response) mutable {
+            if (response.success)
+            {
+                appendExchange(userMessage, {QStringLiteral("assistant"), response.content});
+            }
+
+            if (callback)
+            {
+                callback(response);
+            }
+        });
+}
+
 void ConversationManager::cancel()
 {
     if (m_provider)
