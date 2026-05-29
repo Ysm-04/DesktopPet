@@ -11,30 +11,39 @@
 #include <QTimer>
 #include <QWidget>
 
+#include <memory>
+
 class QMenu;
+class QMoveEvent;
 class QPixmap;
+class ChatBubble;
 class PetView;
 
 class PetWindow : public QWidget
 {
 public:
     explicit PetWindow(QWidget *parent = nullptr);
+    ~PetWindow();
 
     void applyAppConfig(const AppConfig &config);
     AppConfig currentAppConfig() const;
     void pauseAnimation();
     void resumeAnimation();
+    void showBubbleMessage(const QString &message);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void moveEvent(QMoveEvent *event) override;
 
 private:
     void loadInitialImage();
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
+    void updateBubblePosition();
+    QPoint bubbleAnchorPosition() const;
     void playState(const QString &stateName, bool centerWindow);
     void playResolvedState(const QString &stateName, bool centerWindow);
     void scheduleIdleBehavior();
@@ -45,6 +54,7 @@ private:
     bool isPointVisibleOnScreen(const QPoint &point) const;
     void setAlwaysOnTop(bool enabled);
 
+    std::unique_ptr<ChatBubble> m_chatBubble;
     PetView *m_petView;
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;

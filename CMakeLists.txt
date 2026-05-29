@@ -22,6 +22,7 @@ qt_add_executable(QtDesktopPet
     src/character/CharacterPackageLoader.cpp
     src/character/FrameAnimator.h
     src/character/FrameAnimator.cpp
+    src/config/AIConfig.h
     src/config/AppConfig.h
     src/config/ConfigManager.h
     src/config/ConfigManager.cpp
@@ -29,6 +30,8 @@ qt_add_executable(QtDesktopPet
     src/state/PetStateMachine.cpp
     src/tray/TrayController.h
     src/tray/TrayController.cpp
+    src/ui/ChatBubble.h
+    src/ui/ChatBubble.cpp
     src/ui/PetView.h
     src/ui/PetView.cpp
     src/ui/PetWindow.h

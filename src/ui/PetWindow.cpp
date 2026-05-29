@@ -2,6 +2,7 @@
 
 #include "../character/CharacterPackageLoader.h"
 #include "../util/Logger.h"
+#include "ChatBubble.h"
 #include "PetView.h"
 
 #include <QAction>
@@ -16,6 +17,8 @@
 #include <QSet>
 #include <QStringList>
 #include <QVBoxLayout>
+
+#include <memory>
 
 namespace
 {
@@ -32,6 +35,7 @@ QString previewImagePath()
 
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
+    , m_chatBubble(std::make_unique<ChatBubble>())
     , m_petView(new PetView(this))
     , m_dragging(false)
     , m_alwaysOnTop(true)
@@ -66,6 +70,8 @@ PetWindow::PetWindow(QWidget *parent)
 
     loadInitialImage();
 }
+
+PetWindow::~PetWindow() = default;
 
 void PetWindow::applyAppConfig(const AppConfig &config)
 {
@@ -110,6 +116,11 @@ void PetWindow::resumeAnimation()
     m_returnToIdleAfterResume = false;
 }
 
+void PetWindow::showBubbleMessage(const QString &message)
+{
+    m_chatBubble->showMessage(message, bubbleAnchorPosition());
+}
+
 void PetWindow::contextMenuEvent(QContextMenuEvent *event)
 {
     QMenu menu(this);
@@ -117,6 +128,11 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     QAction *topAction = menu.addAction(QStringLiteral("取消置顶"));
     topAction->setCheckable(true);
     topAction->setChecked(m_alwaysOnTop);
+
+    QMenu *bubbleTestMenu = menu.addMenu(QStringLiteral("气泡测试"));
+    QAction *shortBubbleAction = bubbleTestMenu->addAction(QStringLiteral("短文本"));
+    QAction *maxBubbleAction = bubbleTestMenu->addAction(QStringLiteral("接近最大尺寸"));
+    QAction *scrollBubbleAction = bubbleTestMenu->addAction(QStringLiteral("超长滚动文本"));
 
     addStateTestActions(&menu);
 
@@ -127,6 +143,18 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     if (selectedAction == topAction)
     {
         setAlwaysOnTop(!m_alwaysOnTop);
+    }
+    else if (selectedAction == shortBubbleAction)
+    {
+        showBubbleMessage(QStringLiteral("收到，马上处理。"));
+    }
+    else if (selectedAction == maxBubbleAction)
+    {
+        showBubbleMessage(QStringLiteral("这是一段用于测试气泡最大显示区域附近表现的文本。它应该自动换行，并在不出现滚动条的情况下尽量接近最大宽度和高度，方便观察边距、圆角、阴影和整体位置是否自然。"));
+    }
+    else if (selectedAction == scrollBubbleAction)
+    {
+        showBubbleMessage(QStringLiteral("这是一段用于测试超长 AI 回复的文本。第一段内容会让气泡快速达到最大高度，并触发垂直滚动条。用户应该可以通过滚动条查看后续内容，同时气泡本身不能继续无限变高。第二段内容继续补充更多文字，用来确认滚动区域、文本换行、右侧滚动条样式和顶部位置是否正常。第三段内容模拟模型输出较长解释时的情况：文本仍然需要保持清晰可读，不能遮挡整个桌面，也不能因为内容太多导致窗口尺寸失控。第四段内容用于确认自动隐藏计时仍然生效，并且再次打开气泡时滚动条会回到顶部。"));
     }
     else if (selectedAction == exitAction)
     {
@@ -143,11 +171,18 @@ void PetWindow::mouseMoveEvent(QMouseEvent *event)
     if (m_dragging && (event->buttons() & Qt::LeftButton))
     {
         move(event->globalPosition().toPoint() - m_dragOffset);
+        updateBubblePosition();
         event->accept();
         return;
     }
 
     QWidget::mouseMoveEvent(event);
+}
+
+void PetWindow::moveEvent(QMoveEvent *event)
+{
+    QWidget::moveEvent(event);
+    updateBubblePosition();
 }
 
 void PetWindow::mousePressEvent(QMouseEvent *event)
@@ -243,6 +278,16 @@ void PetWindow::addStateTestActions(QMenu *menu)
     }
 
     stateMenu->setEnabled(!stateMenu->actions().isEmpty());
+}
+
+void PetWindow::updateBubblePosition()
+{
+    m_chatBubble->updateAnchorPosition(bubbleAnchorPosition());
+}
+
+QPoint PetWindow::bubbleAnchorPosition() const
+{
+    return frameGeometry().topLeft() + QPoint(width() / 2, 0);
 }
 
 void PetWindow::playState(const QString &stateName, bool centerWindow)
