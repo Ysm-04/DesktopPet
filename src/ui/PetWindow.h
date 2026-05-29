@@ -14,9 +14,11 @@
 #include <memory>
 
 class QMenu;
+class QHideEvent;
 class QMoveEvent;
 class QPixmap;
 class ChatBubble;
+class ChatInputDialog;
 class ConversationManager;
 class LLMProvider;
 class PetView;
@@ -35,6 +37,8 @@ public:
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
@@ -46,9 +50,13 @@ private:
     void addStateTestActions(QMenu *menu);
     void startAITest();
     void startChat();
+    bool submitChatMessage(const QString &message);
     void clearConversation();
     void cancelActiveAIRequest();
+    void showConversationHistory();
     bool hasActiveAIRequest() const;
+    void resetBubbleAutoHideTimer();
+    QPoint chatInputAnchorPosition() const;
     void updateBubblePosition();
     QPoint bubbleAnchorPosition() const;
     void playState(const QString &stateName, bool centerWindow);
@@ -62,6 +70,7 @@ private:
     void setAlwaysOnTop(bool enabled);
 
     std::unique_ptr<ChatBubble> m_chatBubble;
+    std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
     std::unique_ptr<LLMProvider> m_aiTestProvider;
     PetView *m_petView;

@@ -7,6 +7,7 @@
 #include "../config/SecretStore.h"
 #include "../util/Logger.h"
 #include "ChatBubble.h"
+#include "ChatInputDialog.h"
 #include "PetView.h"
 #include "SettingsDialog.h"
 
@@ -15,7 +16,7 @@
 #include <QCursor>
 #include <QDialog>
 #include <QGuiApplication>
-#include <QInputDialog>
+#include <QHideEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -41,6 +42,7 @@ QString previewImagePath()
 }
 
 constexpr int MaxUserMessageLength = 4000;
+constexpr int ChatInputLowerOffsetY = 48;
 
 bool populateRuntimeApiKey(AIConfig &config, QString *errorMessage)
 {
@@ -119,11 +121,49 @@ QString userVisibleErrorMessage(const ChatResponse &response)
 
     return message;
 }
+
+QString roleLabel(const QString &role)
+{
+    if (role == QStringLiteral("user"))
+    {
+        return QStringLiteral("你");
+    }
+
+    if (role == QStringLiteral("assistant"))
+    {
+        return QStringLiteral("桌宠");
+    }
+
+    return role;
+}
+
+QString formattedConversationHistory(const QVector<ChatMessage> &history)
+{
+    if (history.isEmpty())
+    {
+        return QStringLiteral("暂无对话记录。");
+    }
+
+    QStringList lines;
+    for (const ChatMessage &message : history)
+    {
+        const QString content = message.content.trimmed();
+        if (content.isEmpty())
+        {
+            continue;
+        }
+
+        lines.append(roleLabel(message.role) + QStringLiteral("：") + content);
+    }
+
+    return lines.isEmpty() ? QStringLiteral("暂无对话记录。") : lines.join(QStringLiteral("\n\n"));
+}
 }
 
 PetWindow::PetWindow(QWidget *parent)
     : QWidget(parent)
     , m_chatBubble(std::make_unique<ChatBubble>())
+    , m_chatInputDialog(std::make_unique<ChatInputDialog>(MaxUserMessageLength, this))
     , m_conversationManager(std::make_unique<ConversationManager>())
     , m_petView(new PetView(this))
     , m_dragging(false)
@@ -155,6 +195,11 @@ PetWindow::PetWindow(QWidget *parent)
     m_behaviorReturnTimer.setSingleShot(true);
     connect(&m_behaviorReturnTimer, &QTimer::timeout, this, [this]() {
         returnToIdleFromBehavior();
+    });
+
+    QPointer<PetWindow> window(this);
+    m_chatInputDialog->setSubmitCallback([window](const QString &message) {
+        return !window.isNull() && window->submitChatMessage(message);
     });
 
     loadInitialImage();
@@ -212,6 +257,8 @@ void PetWindow::showBubbleMessage(const QString &message)
 
 void PetWindow::contextMenuEvent(QContextMenuEvent *event)
 {
+    resetBubbleAutoHideTimer();
+
     QMenu menu(this);
 
     QAction *topAction = menu.addAction(QStringLiteral("取消置顶"));
@@ -228,6 +275,7 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     aiTestAction->setEnabled(!aiRequestRunning);
     QAction *chatAction = menu.addAction(QStringLiteral("聊天"));
     chatAction->setEnabled(!aiRequestRunning);
+    QAction *showConversationAction = menu.addAction(QStringLiteral("显示对话"));
     QAction *cancelAIAction = menu.addAction(QStringLiteral("取消 AI 请求"));
     cancelAIAction->setEnabled(aiRequestRunning);
     QAction *clearConversationAction = menu.addAction(QStringLiteral("清空对话"));
@@ -263,6 +311,10 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     else if (selectedAction == chatAction)
     {
         startChat();
+    }
+    else if (selectedAction == showConversationAction)
+    {
+        showConversationHistory();
     }
     else if (selectedAction == cancelAIAction)
     {
@@ -350,29 +402,39 @@ void PetWindow::startChat()
         return;
     }
 
+    if (!m_chatInputDialog)
+    {
+        return;
+    }
+
+    m_chatInputDialog->showAt(chatInputAnchorPosition());
+}
+
+bool PetWindow::submitChatMessage(const QString &message)
+{
+    if (m_aiTestProvider && m_aiTestProvider->isBusy())
+    {
+        showBubbleMessage(QStringLiteral("AI 测试请求正在进行。"));
+        return false;
+    }
+
     if (!m_conversationManager || m_conversationManager->isBusy())
     {
         showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
-        return;
+        return false;
     }
 
-    bool accepted = false;
-    const QString message = QInputDialog::getMultiLineText(
-        this,
-        QStringLiteral("聊天"),
-        QStringLiteral("输入消息"),
-        {},
-        &accepted).trimmed();
-    if (!accepted || message.isEmpty())
+    const QString trimmedMessage = message.trimmed();
+    if (trimmedMessage.isEmpty())
     {
-        return;
+        return false;
     }
 
-    if (message.size() > MaxUserMessageLength)
+    if (trimmedMessage.size() > MaxUserMessageLength)
     {
         playState(QStringLiteral("error"), false);
         showBubbleMessage(QStringLiteral("消息太长，请控制在 4000 字以内。"));
-        return;
+        return false;
     }
 
     ConfigManager configManager;
@@ -382,13 +444,13 @@ void PetWindow::startChat()
     {
         playState(QStringLiteral("error"), false);
         showBubbleMessage(errorMessage);
-        return;
+        return false;
     }
 
     if (!m_conversationManager->setProvider(std::make_unique<OpenAICompatibleProvider>(config)))
     {
         showBubbleMessage(QStringLiteral("AI 回复正在进行。"));
-        return;
+        return false;
     }
 
     playState(QStringLiteral("think"), false);
@@ -411,6 +473,8 @@ void PetWindow::startChat()
         window->playState(QStringLiteral("error"), false);
         window->showBubbleMessage(QStringLiteral("AI 回复失败：") + userVisibleErrorMessage(response));
     });
+
+    return true;
 }
 
 void PetWindow::clearConversation()
@@ -464,10 +528,60 @@ bool PetWindow::hasActiveAIRequest() const
         || (m_conversationManager && m_conversationManager->isBusy());
 }
 
+void PetWindow::showConversationHistory()
+{
+    const QVector<ChatMessage> history = m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>();
+    m_chatBubble->showMessage(formattedConversationHistory(history), bubbleAnchorPosition(), 30000);
+    m_chatBubble->setDismissOnExternalInteraction(true);
+}
+
+void PetWindow::resetBubbleAutoHideTimer()
+{
+    if (m_chatBubble)
+    {
+        m_chatBubble->resetAutoHideTimer();
+    }
+}
+
+QPoint PetWindow::chatInputAnchorPosition() const
+{
+    return frameGeometry().topLeft() + QPoint(width() / 2, height() / 2 + ChatInputLowerOffsetY);
+}
+
+void PetWindow::hideEvent(QHideEvent *event)
+{
+    if (m_chatBubble)
+    {
+        m_chatBubble->hideBubble();
+    }
+    if (m_chatInputDialog)
+    {
+        m_chatInputDialog->hide();
+    }
+
+    QWidget::hideEvent(event);
+}
+
+void PetWindow::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    resetBubbleAutoHideTimer();
+    if (event->button() == Qt::LeftButton)
+    {
+        m_dragging = false;
+        playResolvedState(m_stateMachine.endDrag(), false);
+        startChat();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseDoubleClickEvent(event);
+}
+
 void PetWindow::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_dragging && (event->buttons() & Qt::LeftButton))
     {
+        resetBubbleAutoHideTimer();
         move(event->globalPosition().toPoint() - m_dragOffset);
         updateBubblePosition();
         event->accept();
@@ -485,6 +599,8 @@ void PetWindow::moveEvent(QMoveEvent *event)
 
 void PetWindow::mousePressEvent(QMouseEvent *event)
 {
+    resetBubbleAutoHideTimer();
+
     if (event->button() == Qt::LeftButton)
     {
         m_dragging = true;
@@ -499,6 +615,8 @@ void PetWindow::mousePressEvent(QMouseEvent *event)
 
 void PetWindow::mouseReleaseEvent(QMouseEvent *event)
 {
+    resetBubbleAutoHideTimer();
+
     if (event->button() == Qt::LeftButton)
     {
         m_dragging = false;

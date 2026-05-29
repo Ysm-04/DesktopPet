@@ -41,6 +41,8 @@ qt_add_executable(QtDesktopPet
     src/tray/TrayController.cpp
     src/ui/ChatBubble.h
     src/ui/ChatBubble.cpp
+    src/ui/ChatInputDialog.h
+    src/ui/ChatInputDialog.cpp
     src/ui/PetView.h
     src/ui/PetView.cpp
     src/ui/SettingsDialog.h

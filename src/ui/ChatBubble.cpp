@@ -1,5 +1,7 @@
 #include "ChatBubble.h"
 
+#include <QApplication>
+#include <QEvent>
 #include <QFontMetrics>
 #include <QFrame>
 #include <QRect>
@@ -32,6 +34,10 @@ ChatBubble::ChatBubble(QWidget *parent)
     m_textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     m_textEdit->setLineWrapMode(QTextEdit::WidgetWidth);
     m_textEdit->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_textEdit->installEventFilter(this);
+    m_textEdit->viewport()->installEventFilter(this);
+    m_textEdit->verticalScrollBar()->installEventFilter(this);
+    qApp->installEventFilter(this);
     m_textEdit->setStyleSheet(QStringLiteral(
         "QTextEdit {"
         "background: rgba(255, 255, 255, 232);"
@@ -65,7 +71,9 @@ ChatBubble::ChatBubble(QWidget *parent)
 
 void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs)
 {
+    m_dismissOnExternalInteraction = false;
     m_anchorPosition = anchorPosition;
+    m_autoHideDurationMs = durationMs;
     const QString trimmed = message.trimmed();
     m_textEdit->setPlainText(trimmed);
     m_textEdit->verticalScrollBar()->setValue(0);
@@ -88,6 +96,79 @@ void ChatBubble::updateAnchorPosition(const QPoint &anchorPosition)
     if (isVisible())
     {
         updatePosition();
+    }
+}
+
+void ChatBubble::setDismissOnExternalInteraction(bool enabled)
+{
+    m_dismissOnExternalInteraction = enabled;
+}
+
+void ChatBubble::resetAutoHideTimer()
+{
+    if (isVisible() && m_autoHideDurationMs > 0)
+    {
+        m_hideTimer.start(m_autoHideDurationMs);
+    }
+}
+
+void ChatBubble::hideBubble()
+{
+    m_hideTimer.stop();
+    hide();
+}
+
+bool ChatBubble::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == qApp && m_dismissOnExternalInteraction && event->type() == QEvent::ApplicationDeactivate)
+    {
+        hideBubble();
+        return false;
+    }
+
+    if (m_dismissOnExternalInteraction && event->type() == QEvent::MouseButtonPress && !isOwnObject(watched))
+    {
+        hideBubble();
+        return false;
+    }
+
+    if ((watched == m_textEdit || watched == m_textEdit->viewport() || watched == m_textEdit->verticalScrollBar())
+        && isUserInteractionEvent(event))
+    {
+        resetAutoHideTimer();
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
+bool ChatBubble::isOwnObject(QObject *object) const
+{
+    while (object != nullptr)
+    {
+        if (object == this || object == m_textEdit || object == m_textEdit->viewport() || object == m_textEdit->verticalScrollBar())
+        {
+            return true;
+        }
+
+        object = object->parent();
+    }
+
+    return false;
+}
+
+bool ChatBubble::isUserInteractionEvent(QEvent *event) const
+{
+    switch (event->type())
+    {
+    case QEvent::MouseButtonPress:
+    case QEvent::MouseButtonRelease:
+    case QEvent::MouseButtonDblClick:
+    case QEvent::MouseMove:
+    case QEvent::Wheel:
+    case QEvent::KeyPress:
+        return true;
+    default:
+        return false;
     }
 }
 

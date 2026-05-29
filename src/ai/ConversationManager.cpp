@@ -1,5 +1,6 @@
 #include "ConversationManager.h"
 
+#include <QtGlobal>
 #include <utility>
 
 ConversationManager::ConversationManager()
@@ -20,6 +21,11 @@ bool ConversationManager::isBusy() const
 bool ConversationManager::hasHistory() const
 {
     return !m_history.isEmpty();
+}
+
+QVector<ChatMessage> ConversationManager::history() const
+{
+    return m_history;
 }
 
 bool ConversationManager::setProvider(std::unique_ptr<LLMProvider> provider)
@@ -103,9 +109,10 @@ ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) co
         request.messages.append({QStringLiteral("system"), m_systemPrompt});
     }
 
-    for (const ChatMessage &message : m_history)
+    const int firstHistoryIndex = qMax(0, m_history.size() - m_maxRequestHistoryMessages);
+    for (int index = firstHistoryIndex; index < m_history.size(); ++index)
     {
-        request.messages.append(message);
+        request.messages.append(m_history.at(index));
     }
     request.messages.append(userMessage);
     return request;
@@ -115,13 +122,4 @@ void ConversationManager::appendExchange(const ChatMessage &userMessage, const C
 {
     m_history.append(userMessage);
     m_history.append(assistantMessage);
-    trimHistory();
-}
-
-void ConversationManager::trimHistory()
-{
-    while (m_history.size() > m_maxHistoryMessages)
-    {
-        m_history.removeFirst();
-    }
 }
