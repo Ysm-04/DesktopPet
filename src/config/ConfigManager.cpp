@@ -37,11 +37,18 @@ QJsonObject performanceObjectFromConfig(const AppConfig &config)
 QJsonObject objectFromAIConfig(const AIConfig &config)
 {
     QJsonObject root;
-    root.insert(QStringLiteral("providerType"), config.providerType);
+    root.insert(QStringLiteral("provider"), config.provider);
+    root.insert(QStringLiteral("protocol"), config.protocol);
     root.insert(QStringLiteral("baseUrl"), config.baseUrl);
-    root.insert(QStringLiteral("apiKey"), config.apiKey);
     root.insert(QStringLiteral("model"), config.model);
     root.insert(QStringLiteral("path"), config.path);
+    root.insert(QStringLiteral("apiKeyStorage"), config.apiKeyStorage);
+    root.insert(QStringLiteral("apiKeyEncrypted"), config.apiKeyEncrypted);
+    root.insert(QStringLiteral("allowPlainApiKey"), config.allowPlainApiKey);
+    if (config.allowPlainApiKey && config.apiKeyStorage == QStringLiteral("plain-json"))
+    {
+        root.insert(QStringLiteral("apiKey"), config.apiKey);
+    }
     root.insert(QStringLiteral("stream"), config.stream);
     root.insert(QStringLiteral("timeoutMs"), config.timeoutMs);
     root.insert(QStringLiteral("temperature"), config.temperature);
@@ -144,11 +151,18 @@ AIConfig ConfigManager::loadAIConfig() const
     }
 
     const QJsonObject root = document.object();
-    config.providerType = root.value(QStringLiteral("providerType")).toString(config.providerType);
+    config.provider = root.value(QStringLiteral("provider")).toString(config.provider);
+    config.protocol = root.value(QStringLiteral("protocol")).toString(root.value(QStringLiteral("providerType")).toString(config.protocol));
     config.baseUrl = root.value(QStringLiteral("baseUrl")).toString(config.baseUrl);
-    config.apiKey = root.value(QStringLiteral("apiKey")).toString(config.apiKey);
     config.model = root.value(QStringLiteral("model")).toString(config.model);
     config.path = root.value(QStringLiteral("path")).toString(config.path);
+    config.apiKeyStorage = root.value(QStringLiteral("apiKeyStorage")).toString(config.apiKeyStorage);
+    config.apiKeyEncrypted = root.value(QStringLiteral("apiKeyEncrypted")).toString(config.apiKeyEncrypted);
+    config.allowPlainApiKey = root.value(QStringLiteral("allowPlainApiKey")).toBool(config.allowPlainApiKey);
+    if (config.allowPlainApiKey && config.apiKeyStorage == QStringLiteral("plain-json"))
+    {
+        config.apiKey = root.value(QStringLiteral("apiKey")).toString(config.apiKey);
+    }
     config.stream = root.value(QStringLiteral("stream")).toBool(config.stream);
     config.timeoutMs = root.value(QStringLiteral("timeoutMs")).toInt(config.timeoutMs);
     config.temperature = root.value(QStringLiteral("temperature")).toDouble(config.temperature);

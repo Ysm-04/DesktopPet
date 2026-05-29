@@ -23,9 +23,12 @@ qt_add_executable(QtDesktopPet
     src/character/FrameAnimator.h
     src/character/FrameAnimator.cpp
     src/config/AIConfig.h
+    src/config/AIConfig.cpp
     src/config/AppConfig.h
     src/config/ConfigManager.h
     src/config/ConfigManager.cpp
+    src/config/SecretStore.h
+    src/config/SecretStore.cpp
     src/state/PetStateMachine.h
     src/state/PetStateMachine.cpp
     src/tray/TrayController.h
@@ -34,6 +37,8 @@ qt_add_executable(QtDesktopPet
     src/ui/ChatBubble.cpp
     src/ui/PetView.h
     src/ui/PetView.cpp
+    src/ui/SettingsDialog.h
+    src/ui/SettingsDialog.cpp
     src/ui/PetWindow.h
     src/ui/PetWindow.cpp
     src/util/Logger.h
@@ -52,4 +57,5 @@ target_link_libraries(QtDesktopPet
 
 if (WIN32)
     target_compile_definitions(QtDesktopPet PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(QtDesktopPet PRIVATE Crypt32)
 endif()

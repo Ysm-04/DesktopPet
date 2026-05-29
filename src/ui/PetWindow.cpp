@@ -1,13 +1,16 @@
 #include "PetWindow.h"
 
 #include "../character/CharacterPackageLoader.h"
+#include "../config/ConfigManager.h"
 #include "../util/Logger.h"
 #include "ChatBubble.h"
 #include "PetView.h"
+#include "SettingsDialog.h"
 
 #include <QAction>
 #include <QContextMenuEvent>
 #include <QCursor>
+#include <QDialog>
 #include <QGuiApplication>
 #include <QMenu>
 #include <QMouseEvent>
@@ -134,6 +137,8 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     QAction *maxBubbleAction = bubbleTestMenu->addAction(QStringLiteral("接近最大尺寸"));
     QAction *scrollBubbleAction = bubbleTestMenu->addAction(QStringLiteral("超长滚动文本"));
 
+    QAction *settingsAction = menu.addAction(QStringLiteral("设置"));
+
     addStateTestActions(&menu);
 
     menu.addSeparator();
@@ -155,6 +160,15 @@ void PetWindow::contextMenuEvent(QContextMenuEvent *event)
     else if (selectedAction == scrollBubbleAction)
     {
         showBubbleMessage(QStringLiteral("这是一段用于测试超长 AI 回复的文本。第一段内容会让气泡快速达到最大高度，并触发垂直滚动条。用户应该可以通过滚动条查看后续内容，同时气泡本身不能继续无限变高。第二段内容继续补充更多文字，用来确认滚动区域、文本换行、右侧滚动条样式和顶部位置是否正常。第三段内容模拟模型输出较长解释时的情况：文本仍然需要保持清晰可读，不能遮挡整个桌面，也不能因为内容太多导致窗口尺寸失控。第四段内容用于确认自动隐藏计时仍然生效，并且再次打开气泡时滚动条会回到顶部。"));
+    }
+    else if (selectedAction == settingsAction)
+    {
+        ConfigManager configManager;
+        SettingsDialog dialog(configManager.loadAIConfig(), this);
+        if (dialog.exec() == QDialog::Accepted && !configManager.saveAIConfig(dialog.aiConfig()))
+        {
+            Logger::warning(QStringLiteral("Failed to save AI config from settings dialog."));
+        }
     }
     else if (selectedAction == exitAction)
     {
