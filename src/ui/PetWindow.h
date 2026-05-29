@@ -56,6 +56,8 @@ private:
     void refreshChatHistoryPanel();
     void handleChatStreamDelta(const QString &delta);
     void flushStreamingBubble(bool finalUpdate);
+    void finishStreamingChat();
+    void cancelStreamingChat();
     bool hasActiveAIRequest() const;
     void resetBubbleAutoHideTimer();
     QPoint chatInputAnchorPosition() const;
@@ -89,4 +91,6 @@ private:
     bool m_alwaysOnTop;
     bool m_centerNextFrame;
     bool m_returnToIdleAfterResume = false;
+    bool m_streamingChatActive = false;
+    bool m_streamingTalkStarted = false;
 };

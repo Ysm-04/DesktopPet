@@ -342,6 +342,8 @@ bool PetWindow::submitChatMessage(const QString &message)
     playState(QStringLiteral("think"), false);
     m_streamingAssistantText.clear();
     m_streamBubbleUpdateTimer.stop();
+    m_streamingChatActive = true;
+    m_streamingTalkStarted = false;
     m_chatBubble->showMessage(QStringLiteral("正在思考..."), bubbleAnchorPosition(), 0);
 
     QPointer<PetWindow> window(this);
@@ -362,13 +364,14 @@ bool PetWindow::submitChatMessage(const QString &message)
             window->m_streamBubbleUpdateTimer.stop();
             if (response.success)
             {
+                window->finishStreamingChat();
                 window->m_streamingAssistantText = response.content;
                 window->flushStreamingBubble(true);
-                window->playState(QStringLiteral("talk"), false);
                 window->refreshChatHistoryPanel();
                 return;
             }
 
+            window->cancelStreamingChat();
             window->m_streamingAssistantText.clear();
             window->playState(QStringLiteral("error"), false);
             window->showBubbleMessage(QStringLiteral("AI 回复失败：") + userVisibleErrorMessage(response));
@@ -386,8 +389,7 @@ void PetWindow::clearConversation()
 
     const bool hadActiveRequest = hasActiveAIRequest();
     m_conversationManager->clear();
-    m_streamBubbleUpdateTimer.stop();
-    m_streamingAssistantText.clear();
+    cancelStreamingChat();
     refreshChatHistoryPanel();
     showBubbleMessage(hadActiveRequest
         ? QStringLiteral("已取消 AI 请求，并清空对话。")
@@ -400,8 +402,7 @@ void PetWindow::cancelActiveAIRequest()
     if (m_conversationManager && m_conversationManager->isBusy())
     {
         m_conversationManager->cancel();
-        m_streamBubbleUpdateTimer.stop();
-        m_streamingAssistantText.clear();
+        cancelStreamingChat();
         showBubbleMessage(QStringLiteral("AI 请求已取消。"));
         playState(QStringLiteral("idle"), false);
         return;
@@ -441,6 +442,16 @@ void PetWindow::handleChatStreamDelta(const QString &delta)
     }
 
     m_streamingAssistantText += delta;
+    if (m_streamingChatActive && !m_streamingTalkStarted)
+    {
+        m_streamingTalkStarted = true;
+        playState(QStringLiteral("talk"), false);
+        if (m_stateMachine.currentState() == QStringLiteral("talk"))
+        {
+            m_returnToIdleAfterResume = false;
+        }
+    }
+
     if (!isVisible())
     {
         return;
@@ -464,6 +475,20 @@ void PetWindow::flushStreamingBubble(bool finalUpdate)
         bubbleAnchorPosition(),
         finalUpdate ? 10000 : 0,
         true);
+}
+
+void PetWindow::finishStreamingChat()
+{
+    m_streamingChatActive = false;
+    m_streamingTalkStarted = false;
+}
+
+void PetWindow::cancelStreamingChat()
+{
+    m_streamBubbleUpdateTimer.stop();
+    m_streamingAssistantText.clear();
+    m_streamingChatActive = false;
+    m_streamingTalkStarted = false;
 }
 
 void PetWindow::resetBubbleAutoHideTimer()
@@ -654,6 +679,25 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
         return;
     }
 
+    if (m_streamingChatActive
+        && stateName != QStringLiteral("error")
+        && stateName != QStringLiteral("drag"))
+    {
+        const QString heldState = m_streamingTalkStarted
+            ? QStringLiteral("talk")
+            : QStringLiteral("think");
+
+        if (stateName != heldState && m_clips.contains(heldState))
+        {
+            playResolvedState(heldState, centerWindow);
+        }
+
+        if (stateName != heldState)
+        {
+            return;
+        }
+    }
+
     if (m_frameAnimator.currentStateName() == stateName && m_frameAnimator.isPlaying())
     {
         return;
@@ -727,6 +771,19 @@ void PetWindow::playIdleBehavior()
 
 void PetWindow::returnToIdleFromBehavior()
 {
+    if (m_streamingChatActive)
+    {
+        const QString heldState = m_streamingTalkStarted
+            ? QStringLiteral("talk")
+            : QStringLiteral("think");
+
+        if (m_clips.contains(heldState))
+        {
+            playResolvedState(heldState, false);
+        }
+        return;
+    }
+
     if (!m_dragging)
     {
         playResolvedState(m_stateMachine.finishState(QStringLiteral("idle")), false);
