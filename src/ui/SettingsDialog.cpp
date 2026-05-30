@@ -62,6 +62,7 @@ SettingsDialog::SettingsDialog(
     const AIConfigStore &configStore,
     const AppConfig &appConfig,
     std::function<bool()> aiTestBlocked,
+    std::function<void()> clearConversationHistoryCallback,
     QWidget *parent)
     : QDialog(parent)
     , m_providerComboBox(new QComboBox(this))
@@ -78,10 +79,16 @@ SettingsDialog::SettingsDialog(
     , m_performanceModeComboBox(new QComboBox(this))
     , m_pauseWhenHiddenCheckBox(new QCheckBox(QStringLiteral("隐藏到托盘时暂停动画"), this))
     , m_enableLazyLoadCheckBox(new QCheckBox(QStringLiteral("启用动画懒加载"), this))
+    , m_requestContextMessageLimitSpinBox(new QSpinBox(this))
+    , m_memoryHistoryMessageLimitSpinBox(new QSpinBox(this))
+    , m_saveConversationHistoryCheckBox(new QCheckBox(QStringLiteral("保存聊天记录到本地"), this))
+    , m_savedHistoryMessageLimitSpinBox(new QSpinBox(this))
+    , m_clearConversationHistoryButton(new QPushButton(QStringLiteral("清空聊天记录"), this))
     , m_characterComboBox(new QComboBox(this))
     , m_configStore(configStore)
     , m_appConfig(appConfig)
     , m_aiTestBlocked(std::move(aiTestBlocked))
+    , m_clearConversationHistory(std::move(clearConversationHistoryCallback))
 {
     setWindowTitle(QStringLiteral("设置"));
     setModal(true);
@@ -126,6 +133,24 @@ SettingsDialog::SettingsDialog(
 
     m_pauseWhenHiddenCheckBox->setChecked(m_appConfig.pauseWhenHidden);
     m_enableLazyLoadCheckBox->setChecked(m_appConfig.enableLazyLoad);
+
+    m_requestContextMessageLimitSpinBox->setRange(0, 200);
+    m_requestContextMessageLimitSpinBox->setValue(qBound(0, m_appConfig.requestContextMessageLimit, 200));
+
+    m_memoryHistoryMessageLimitSpinBox->setRange(2, 5000);
+    m_memoryHistoryMessageLimitSpinBox->setSingleStep(2);
+    m_memoryHistoryMessageLimitSpinBox->setValue(qBound(2, m_appConfig.memoryHistoryMessageLimit, 5000));
+
+    m_saveConversationHistoryCheckBox->setChecked(m_appConfig.saveConversationHistory);
+
+    m_savedHistoryMessageLimitSpinBox->setRange(2, 10000);
+    m_savedHistoryMessageLimitSpinBox->setSingleStep(2);
+    m_savedHistoryMessageLimitSpinBox->setValue(qBound(2, m_appConfig.savedHistoryMessageLimit, 10000));
+    m_savedHistoryMessageLimitSpinBox->setEnabled(m_saveConversationHistoryCheckBox->isChecked());
+
+    m_clearConversationStatusLabel = new QLabel(this);
+    m_clearConversationStatusLabel->setObjectName(QStringLiteral("HintLabel"));
+    m_clearConversationStatusLabel->setWordWrap(true);
 
     m_allowPlainApiKeyCheckBox->setVisible(!SecretStore::isEncryptionAvailable());
     m_currentProvider = normalizedProviderName(m_providerComboBox->currentData().toString());
@@ -201,6 +226,39 @@ SettingsDialog::SettingsDialog(
     auto *appPage = new QWidget(this);
     appPage->setLayout(appPageLayout);
 
+    auto *chatTitleLabel = new QLabel(QStringLiteral("聊天记录"), this);
+    chatTitleLabel->setObjectName(QStringLiteral("PageTitle"));
+    auto *chatHintLabel = new QLabel(QStringLiteral("聊天记录默认只保存在内存中；开启本地保存后会写入用户配置目录。"), this);
+    chatHintLabel->setObjectName(QStringLiteral("HintLabel"));
+    chatHintLabel->setWordWrap(true);
+
+    auto *chatFormLayout = new QFormLayout();
+    chatFormLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    chatFormLayout->setLabelAlignment(Qt::AlignRight);
+    chatFormLayout->setFormAlignment(Qt::AlignTop);
+    chatFormLayout->setHorizontalSpacing(18);
+    chatFormLayout->setVerticalSpacing(12);
+    chatFormLayout->addRow(QStringLiteral("请求上下文上限"), m_requestContextMessageLimitSpinBox);
+    chatFormLayout->addRow(QStringLiteral("内存历史上限"), m_memoryHistoryMessageLimitSpinBox);
+    chatFormLayout->addRow(QString(), m_saveConversationHistoryCheckBox);
+    chatFormLayout->addRow(QStringLiteral("本地保存上限"), m_savedHistoryMessageLimitSpinBox);
+
+    auto *clearHistoryLayout = new QHBoxLayout();
+    clearHistoryLayout->addWidget(m_clearConversationHistoryButton);
+    clearHistoryLayout->addWidget(m_clearConversationStatusLabel, 1);
+
+    auto *chatPageLayout = new QVBoxLayout();
+    chatPageLayout->setContentsMargins(24, 24, 24, 24);
+    chatPageLayout->setSpacing(16);
+    chatPageLayout->addWidget(chatTitleLabel);
+    chatPageLayout->addWidget(chatHintLabel);
+    chatPageLayout->addLayout(chatFormLayout);
+    chatPageLayout->addLayout(clearHistoryLayout);
+    chatPageLayout->addStretch();
+
+    auto *chatPage = new QWidget(this);
+    chatPage->setLayout(chatPageLayout);
+
     m_characterComboBox->addItem(QStringLiteral("shiroko"), QStringLiteral("shiroko"));
     m_characterComboBox->setEnabled(false);
     m_characterComboBox->setToolTip(QStringLiteral("角色选择将在多角色资源配置接入后启用。"));
@@ -235,12 +293,14 @@ SettingsDialog::SettingsDialog(
     navigationList->setFrameShape(QFrame::NoFrame);
     navigationList->setSpacing(4);
     navigationList->addItem(QStringLiteral("AI 配置"));
+    navigationList->addItem(QStringLiteral("聊天"));
     navigationList->addItem(QStringLiteral("应用"));
     navigationList->addItem(QStringLiteral("角色"));
 
     auto *pageStack = new QStackedWidget(this);
     pageStack->setObjectName(QStringLiteral("SettingsPages"));
     pageStack->addWidget(aiPage);
+    pageStack->addWidget(chatPage);
     pageStack->addWidget(appPage);
     pageStack->addWidget(characterPage);
 
@@ -303,6 +363,10 @@ SettingsDialog::SettingsDialog(
     connect(m_testConnectionButton, &QPushButton::clicked, this, [this]() {
         testConnection();
     });
+    connect(m_saveConversationHistoryCheckBox, &QCheckBox::toggled, m_savedHistoryMessageLimitSpinBox, &QSpinBox::setEnabled);
+    connect(m_clearConversationHistoryButton, &QPushButton::clicked, this, [this]() {
+        this->clearConversationHistory();
+    });
 }
 
 SettingsDialog::~SettingsDialog()
@@ -335,6 +399,10 @@ AppConfig SettingsDialog::appConfig() const
     }
     config.pauseWhenHidden = m_pauseWhenHiddenCheckBox->isChecked();
     config.enableLazyLoad = m_enableLazyLoadCheckBox->isChecked();
+    config.requestContextMessageLimit = m_requestContextMessageLimitSpinBox->value();
+    config.memoryHistoryMessageLimit = m_memoryHistoryMessageLimitSpinBox->value();
+    config.saveConversationHistory = m_saveConversationHistoryCheckBox->isChecked();
+    config.savedHistoryMessageLimit = m_savedHistoryMessageLimitSpinBox->value();
     return config;
 }
 
@@ -549,4 +617,23 @@ void SettingsDialog::setTestStatus(const QString &message, const QString &state)
     m_testStatusLabel->setProperty("status", state);
     m_testStatusLabel->style()->unpolish(m_testStatusLabel);
     m_testStatusLabel->style()->polish(m_testStatusLabel);
+}
+
+void SettingsDialog::clearConversationHistory()
+{
+    const QMessageBox::StandardButton result = QMessageBox::question(
+        this,
+        QStringLiteral("清空聊天记录"),
+        QStringLiteral("确定要清空当前内存和本地保存的聊天记录吗？"));
+    if (result != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    if (m_clearConversationHistory)
+    {
+        m_clearConversationHistory();
+    }
+
+    m_clearConversationStatusLabel->setText(QStringLiteral("聊天记录已清空。"));
 }

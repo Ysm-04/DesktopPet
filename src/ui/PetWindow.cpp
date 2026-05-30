@@ -1,7 +1,8 @@
 #include "PetWindow.h"
 
-#include "../ai/ConversationManager.h"
 #include "../ai/AIProviderFactory.h"
+#include "../ai/ConversationManager.h"
+#include "../ai/ConversationStore.h"
 #include "../character/CharacterPackageLoader.h"
 #include "../config/ConfigManager.h"
 #include "../util/Logger.h"
@@ -49,6 +50,12 @@ constexpr int BaseAnimationTargetSize = 320;
 constexpr int LowPowerFpsCap = 6;
 constexpr int ChatFinishedReturnDelayMs = 1500;
 
+int evenBoundedHistoryLimit(int value, int minimum, int maximum)
+{
+    const int boundedValue = qBound(minimum, value, maximum);
+    return boundedValue - (boundedValue % 2);
+}
+
 AppConfig normalizedAppConfig(AppConfig config)
 {
     config.scale = qBound(0.5, config.scale, 2.0);
@@ -57,6 +64,9 @@ AppConfig normalizedAppConfig(AppConfig config)
     {
         config.performanceMode = QStringLiteral("standard");
     }
+    config.requestContextMessageLimit = qBound(0, config.requestContextMessageLimit, 200);
+    config.memoryHistoryMessageLimit = evenBoundedHistoryLimit(config.memoryHistoryMessageLimit, 2, 5000);
+    config.savedHistoryMessageLimit = evenBoundedHistoryLimit(config.savedHistoryMessageLimit, 2, 10000);
     return config;
 }
 
@@ -84,6 +94,7 @@ PetWindow::PetWindow(QWidget *parent)
     , m_chatHistoryPanel(std::make_unique<ChatHistoryPanel>(this))
     , m_chatInputDialog(std::make_unique<ChatInputDialog>(MaxUserMessageLength, this))
     , m_conversationManager(std::make_unique<ConversationManager>())
+    , m_conversationStore(std::make_unique<ConversationStore>(ConfigManager().conversationHistoryPath()))
     , m_petView(new PetView(this))
     , m_dragging(false)
     , m_alwaysOnTop(true)
@@ -129,7 +140,10 @@ PetWindow::PetWindow(QWidget *parent)
     loadInitialImage();
 }
 
-PetWindow::~PetWindow() = default;
+PetWindow::~PetWindow()
+{
+    saveConversationHistoryIfNeeded();
+}
 
 void PetWindow::applyAppConfig(const AppConfig &config)
 {
@@ -137,9 +151,12 @@ void PetWindow::applyAppConfig(const AppConfig &config)
     const bool rebuildClips = !qFuzzyCompare(m_appConfig.scale, normalizedConfig.scale)
         || m_appConfig.performanceMode != normalizedConfig.performanceMode
         || m_appConfig.enableLazyLoad != normalizedConfig.enableLazyLoad;
+    const bool loadPersistedHistory = !m_appConfig.saveConversationHistory
+        && normalizedConfig.saveConversationHistory;
 
     m_appConfig = normalizedConfig;
     setAlwaysOnTop(m_appConfig.alwaysOnTop);
+    configureConversation(loadPersistedHistory);
 
     if (m_appConfig.hasWindowPosition && isPointVisibleOnScreen(m_appConfig.windowPosition))
     {
@@ -213,6 +230,8 @@ void PetWindow::openSettingsDialog()
     ConfigManager configManager;
     SettingsDialog dialog(configManager.loadAIConfigStore(), currentAppConfig(), [this]() {
         return isManualStateSwitchLocked();
+    }, [this]() {
+        clearConversation();
     }, this);
     if (dialog.exec() != QDialog::Accepted)
     {
@@ -394,6 +413,7 @@ bool PetWindow::submitChatMessage(const QString &message)
                 window->finishStreamingChat();
                 window->m_streamingAssistantText = response.content;
                 window->flushStreamingBubble(true);
+                window->saveConversationHistoryIfNeeded();
                 window->refreshChatHistoryPanel();
                 if (shouldReturnToIdleAfterChat)
                 {
@@ -420,6 +440,10 @@ void PetWindow::clearConversation()
 
     const bool hadActiveRequest = hasActiveAIRequest();
     m_conversationManager->clear();
+    if (m_conversationStore && !m_conversationStore->clear())
+    {
+        Logger::warning(QStringLiteral("Failed to clear persisted conversation history."));
+    }
     cancelStreamingChat();
     refreshChatHistoryPanel();
     showBubbleMessage(hadActiveRequest
@@ -461,7 +485,8 @@ bool PetWindow::isManualStateSwitchLocked() const
 void PetWindow::showConversationHistory()
 {
     const QVector<ChatMessage> history = m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>();
-    m_chatHistoryPanel->setMessages(history);
+    const int prunedCount = m_conversationManager ? m_conversationManager->prunedHistoryMessageCount() : 0;
+    m_chatHistoryPanel->setMessages(history, prunedCount);
     m_chatHistoryPanel->showNear(frameGeometry());
 }
 
@@ -473,7 +498,74 @@ void PetWindow::refreshChatHistoryPanel()
     }
 
     const QVector<ChatMessage> history = m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>();
-    m_chatHistoryPanel->setMessages(history);
+    const int prunedCount = m_conversationManager ? m_conversationManager->prunedHistoryMessageCount() : 0;
+    m_chatHistoryPanel->setMessages(history, prunedCount);
+}
+
+void PetWindow::configureConversation(bool loadPersistedHistory)
+{
+    if (!m_conversationManager)
+    {
+        return;
+    }
+
+    m_conversationManager->setRequestContextMessageLimit(m_appConfig.requestContextMessageLimit);
+    m_conversationManager->setMemoryHistoryMessageLimit(m_appConfig.memoryHistoryMessageLimit);
+
+    if (loadPersistedHistory)
+    {
+        loadConversationHistoryIfNeeded();
+    }
+
+    saveConversationHistoryIfNeeded();
+    refreshChatHistoryPanel();
+}
+
+void PetWindow::loadConversationHistoryIfNeeded()
+{
+    if (!m_appConfig.saveConversationHistory || !m_conversationManager || !m_conversationStore)
+    {
+        return;
+    }
+
+    if (m_conversationManager->hasHistory())
+    {
+        return;
+    }
+
+    QString loadError;
+    const QVector<ChatMessage> history = m_conversationStore->load(m_appConfig.savedHistoryMessageLimit, &loadError);
+    if (!loadError.isEmpty())
+    {
+        Logger::warning(QStringLiteral("Failed to load conversation history: ") + loadError);
+    }
+
+    if (!history.isEmpty())
+    {
+        m_conversationManager->setHistory(history);
+    }
+}
+
+void PetWindow::saveConversationHistoryIfNeeded()
+{
+    if (!m_appConfig.saveConversationHistory || !m_conversationManager || !m_conversationStore)
+    {
+        return;
+    }
+
+    if (!m_conversationManager->hasHistory())
+    {
+        if (!m_conversationStore->clear())
+        {
+            Logger::warning(QStringLiteral("Failed to clear empty conversation history."));
+        }
+        return;
+    }
+
+    if (!m_conversationStore->save(m_conversationManager->history(), m_appConfig.savedHistoryMessageLimit))
+    {
+        Logger::warning(QStringLiteral("Failed to save conversation history."));
+    }
 }
 
 void PetWindow::handleChatStreamDelta(const QString &delta)

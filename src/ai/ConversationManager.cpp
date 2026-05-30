@@ -28,6 +28,44 @@ QVector<ChatMessage> ConversationManager::history() const
     return m_history;
 }
 
+int ConversationManager::prunedHistoryMessageCount() const
+{
+    return m_prunedHistoryMessageCount;
+}
+
+void ConversationManager::setHistory(const QVector<ChatMessage> &history)
+{
+    m_history.clear();
+    for (const ChatMessage &message : history)
+    {
+        if (message.role.trimmed().isEmpty() || message.content.trimmed().isEmpty())
+        {
+            continue;
+        }
+
+        m_history.append(message);
+    }
+
+    m_prunedHistoryMessageCount = 0;
+    if (m_history.size() % 2 != 0)
+    {
+        m_history.erase(m_history.begin());
+        ++m_prunedHistoryMessageCount;
+    }
+    pruneHistory();
+}
+
+void ConversationManager::setRequestContextMessageLimit(int maxMessages)
+{
+    m_maxRequestContextMessages = qMax(0, maxMessages);
+}
+
+void ConversationManager::setMemoryHistoryMessageLimit(int maxMessages)
+{
+    m_maxStoredHistoryMessages = qMax(0, maxMessages);
+    pruneHistory();
+}
+
 bool ConversationManager::setProvider(std::unique_ptr<LLMProvider> provider)
 {
     if (isBusy())
@@ -146,6 +184,7 @@ void ConversationManager::clear()
     }
 
     m_history.clear();
+    m_prunedHistoryMessageCount = 0;
 }
 
 ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) const
@@ -156,7 +195,7 @@ ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) co
         request.messages.append({QStringLiteral("system"), m_systemPrompt});
     }
 
-    const int firstHistoryIndex = qMax(0, m_history.size() - m_maxRequestHistoryMessages);
+    const int firstHistoryIndex = qMax(0, m_history.size() - m_maxRequestContextMessages);
     for (int index = firstHistoryIndex; index < m_history.size(); ++index)
     {
         request.messages.append(m_history.at(index));
@@ -169,4 +208,33 @@ void ConversationManager::appendExchange(const ChatMessage &userMessage, const C
 {
     m_history.append(userMessage);
     m_history.append(assistantMessage);
+    pruneHistory();
+}
+
+void ConversationManager::pruneHistory()
+{
+    const int maxMessages = normalizedStoredHistoryLimit();
+    if (m_history.size() <= maxMessages)
+    {
+        return;
+    }
+
+    const int removeCount = m_history.size() - maxMessages;
+    m_history.erase(m_history.begin(), m_history.begin() + removeCount);
+    m_prunedHistoryMessageCount += removeCount;
+}
+
+int ConversationManager::normalizedStoredHistoryLimit() const
+{
+    if (m_maxStoredHistoryMessages <= 0)
+    {
+        return 0;
+    }
+
+    if (m_maxStoredHistoryMessages == 1)
+    {
+        return 2;
+    }
+
+    return m_maxStoredHistoryMessages - (m_maxStoredHistoryMessages % 2);
 }

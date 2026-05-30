@@ -15,6 +15,7 @@ namespace
 {
 const QString AppConfigFileName = QStringLiteral("app_config.json");
 const QString AIConfigFileName = QStringLiteral("ai_config.json");
+const QString ConversationHistoryFileName = QStringLiteral("conversation_history.json");
 
 QJsonObject windowObjectFromConfig(const AppConfig &config)
 {
@@ -33,6 +34,16 @@ QJsonObject performanceObjectFromConfig(const AppConfig &config)
     performance.insert(QStringLiteral("pauseWhenHidden"), config.pauseWhenHidden);
     performance.insert(QStringLiteral("enableLazyLoad"), config.enableLazyLoad);
     return performance;
+}
+
+QJsonObject chatObjectFromConfig(const AppConfig &config)
+{
+    QJsonObject chat;
+    chat.insert(QStringLiteral("requestContextMessageLimit"), config.requestContextMessageLimit);
+    chat.insert(QStringLiteral("memoryHistoryMessageLimit"), config.memoryHistoryMessageLimit);
+    chat.insert(QStringLiteral("saveConversationHistory"), config.saveConversationHistory);
+    chat.insert(QStringLiteral("savedHistoryMessageLimit"), config.savedHistoryMessageLimit);
+    return chat;
 }
 
 QString normalizedProviderName(const QString &provider)
@@ -194,6 +205,27 @@ AppConfig ConfigManager::loadAppConfig() const
         config.enableLazyLoad = performance.value(QStringLiteral("enableLazyLoad")).toBool(config.enableLazyLoad);
     }
 
+    const QJsonObject chat = root.value(QStringLiteral("chat")).toObject();
+    if (chat.contains(QStringLiteral("requestContextMessageLimit")))
+    {
+        config.requestContextMessageLimit = chat.value(QStringLiteral("requestContextMessageLimit")).toInt(config.requestContextMessageLimit);
+    }
+
+    if (chat.contains(QStringLiteral("memoryHistoryMessageLimit")))
+    {
+        config.memoryHistoryMessageLimit = chat.value(QStringLiteral("memoryHistoryMessageLimit")).toInt(config.memoryHistoryMessageLimit);
+    }
+
+    if (chat.contains(QStringLiteral("saveConversationHistory")))
+    {
+        config.saveConversationHistory = chat.value(QStringLiteral("saveConversationHistory")).toBool(config.saveConversationHistory);
+    }
+
+    if (chat.contains(QStringLiteral("savedHistoryMessageLimit")))
+    {
+        config.savedHistoryMessageLimit = chat.value(QStringLiteral("savedHistoryMessageLimit")).toInt(config.savedHistoryMessageLimit);
+    }
+
     return config;
 }
 
@@ -280,6 +312,7 @@ bool ConfigManager::saveAppConfig(const AppConfig &config) const
     QJsonObject root;
     root.insert(QStringLiteral("window"), windowObjectFromConfig(config));
     root.insert(QStringLiteral("performance"), performanceObjectFromConfig(config));
+    root.insert(QStringLiteral("chat"), chatObjectFromConfig(config));
 
     QFile file(appConfigPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -336,6 +369,11 @@ QString ConfigManager::appConfigPath() const
 QString ConfigManager::aiConfigPath() const
 {
     return QDir(configDirectoryPath()).filePath(AIConfigFileName);
+}
+
+QString ConfigManager::conversationHistoryPath() const
+{
+    return QDir(configDirectoryPath()).filePath(ConversationHistoryFileName);
 }
 
 QString ConfigManager::configDirectoryPath() const

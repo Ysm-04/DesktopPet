@@ -18,6 +18,7 @@ public:
     bool saveAIConfig(const AIConfig &config) const;
     QString appConfigPath() const;
     QString aiConfigPath() const;
+    QString conversationHistoryPath() const;
 
 private:
     QString configDirectoryPath() const;

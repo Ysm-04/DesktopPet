@@ -149,9 +149,10 @@ ChatHistoryPanel::~ChatHistoryPanel()
     }
 }
 
-void ChatHistoryPanel::setMessages(const QVector<ChatMessage> &messages)
+void ChatHistoryPanel::setMessages(const QVector<ChatMessage> &messages, int prunedMessageCount)
 {
     m_messages = messages;
+    m_prunedMessageCount = qMax(0, prunedMessageCount);
     updateContent();
 }
 
@@ -320,6 +321,16 @@ void ChatHistoryPanel::updateContent()
         "<html><body style=\"font-family:'Microsoft YaHei','Segoe UI',sans-serif; margin:0;\">");
 
     bool hasContent = false;
+    if (m_prunedMessageCount > 0)
+    {
+        hasContent = true;
+        html += QStringLiteral(
+            "<div style=\"margin:0 0 14px 0; padding:8px 10px; border-radius:8px; background:#eef4ff; color:#475467; font-size:13px;\">"
+            "较早 %1 条消息已按历史上限自动清理。"
+            "</div>")
+            .arg(m_prunedMessageCount);
+    }
+
     for (const ChatMessage &message : m_messages)
     {
         const QString content = htmlEscapedContent(message.content);

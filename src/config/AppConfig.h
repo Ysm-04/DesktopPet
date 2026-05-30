@@ -12,4 +12,8 @@ struct AppConfig
     QString performanceMode = QStringLiteral("standard");
     bool pauseWhenHidden = true;
     bool enableLazyLoad = true;
+    int requestContextMessageLimit = 12;
+    int memoryHistoryMessageLimit = 200;
+    bool saveConversationHistory = false;
+    int savedHistoryMessageLimit = 500;
 };

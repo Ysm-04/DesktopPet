@@ -16,7 +16,7 @@ public:
     explicit ChatHistoryPanel(QWidget *parent = nullptr);
     ~ChatHistoryPanel() override;
 
-    void setMessages(const QVector<ChatMessage> &messages);
+    void setMessages(const QVector<ChatMessage> &messages, int prunedMessageCount = 0);
     void showAt(const QPoint &anchorPosition);
     void showNear(const QRect &avoidRect);
 
@@ -34,4 +34,5 @@ private:
 
     QTextEdit *m_textEdit;
     QVector<ChatMessage> m_messages;
+    int m_prunedMessageCount = 0;
 };

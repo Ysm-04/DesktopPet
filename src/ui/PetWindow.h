@@ -21,6 +21,7 @@ class ChatBubble;
 class ChatHistoryPanel;
 class ChatInputDialog;
 class ConversationManager;
+class ConversationStore;
 class PetView;
 
 class PetWindow : public QWidget
@@ -56,6 +57,9 @@ private:
     void cancelActiveAIRequest();
     void showConversationHistory();
     void refreshChatHistoryPanel();
+    void configureConversation(bool loadPersistedHistory);
+    void loadConversationHistoryIfNeeded();
+    void saveConversationHistoryIfNeeded();
     void handleChatStreamDelta(const QString &delta);
     void flushStreamingBubble(bool finalUpdate);
     void finishStreamingChat();
@@ -83,6 +87,7 @@ private:
     std::unique_ptr<ChatHistoryPanel> m_chatHistoryPanel;
     std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
+    std::unique_ptr<ConversationStore> m_conversationStore;
     PetView *m_petView;
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;

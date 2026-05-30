@@ -18,6 +18,8 @@ qt_add_executable(QtDesktopPet
     src/ai/AIProviderFactory.cpp
     src/ai/ConversationManager.h
     src/ai/ConversationManager.cpp
+    src/ai/ConversationStore.h
+    src/ai/ConversationStore.cpp
     src/ai/LLMProvider.h
     src/ai/LLMTypes.h
     src/ai/GoogleGeminiProvider.h
