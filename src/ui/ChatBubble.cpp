@@ -15,7 +15,6 @@ namespace
 constexpr int MinBubbleWidth = 120;
 constexpr int MaxBubbleWidth = 420;
 constexpr int MaxBubbleHeight = 220;
-constexpr int BubbleOffsetY = 8;
 constexpr int BubblePaddingWidth = 28;
 constexpr int BubblePaddingHeight = 24;
 constexpr int BubbleWidthSafetyMargin = 12;
@@ -98,6 +97,7 @@ void ChatBubble::showMessage(const QString &message, const QPoint &anchorPositio
     setFixedSize(bubbleSize);
     updatePosition();
     show();
+    raise();
 
     m_textEdit->verticalScrollBar()->setValue(
         scrollToBottom ? m_textEdit->verticalScrollBar()->maximum() : 0);
@@ -223,5 +223,5 @@ QSize ChatBubble::preferredBubbleSize(const QString &message) const
 
 void ChatBubble::updatePosition()
 {
-    move(m_anchorPosition.x() - width() / 2, m_anchorPosition.y() - height() - BubbleOffsetY);
+    move(m_anchorPosition.x() - width() / 2, m_anchorPosition.y() - height());
 }

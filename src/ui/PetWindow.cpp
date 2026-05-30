@@ -21,6 +21,7 @@
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
+#include <QPointF>
 #include <QPointer>
 #include <QRandomGenerator>
 #include <QScreen>
@@ -46,9 +47,19 @@ QString previewImagePath()
 constexpr int MaxUserMessageLength = 4000;
 constexpr int ChatInputLowerOffsetY = 48;
 constexpr int StreamBubbleUpdateIntervalMs = 80;
-constexpr int BaseAnimationTargetSize = 320;
+constexpr int MinAnimationTargetSide = 32;
+constexpr int MaxAnimationTargetSide = 2048;
 constexpr int LowPowerFpsCap = 6;
 constexpr int ChatFinishedReturnDelayMs = 1500;
+
+int boundedAnimationTargetSide(double sideLength)
+{
+    const double boundedSideLength = qBound(
+        static_cast<double>(MinAnimationTargetSide),
+        sideLength,
+        static_cast<double>(MaxAnimationTargetSide));
+    return qRound(boundedSideLength);
+}
 
 int evenBoundedHistoryLimit(int value, int minimum, int maximum)
 {
@@ -801,7 +812,17 @@ void PetWindow::updateBubblePosition()
 
 QPoint PetWindow::bubbleAnchorPosition() const
 {
-    return frameGeometry().topLeft() + QPoint(width() / 2, 0);
+    const CharacterBase &base = m_characterPackage.base;
+    const CharacterBubble &bubble = m_characterPackage.bubble;
+    const double baseWidth = base.width > 0 ? static_cast<double>(base.width) : static_cast<double>(width());
+    const double baseHeight = base.height > 0 ? static_cast<double>(base.height) : static_cast<double>(height());
+    const double scaleX = baseWidth > 0.0 ? static_cast<double>(width()) / baseWidth : 1.0;
+    const double scaleY = baseHeight > 0.0 ? static_cast<double>(height()) / baseHeight : 1.0;
+    const QPointF localAnchor(
+        static_cast<double>(width()) * base.anchorX + bubble.offsetX * scaleX,
+        static_cast<double>(height()) * base.anchorY + bubble.offsetY * scaleY);
+
+    return frameGeometry().topLeft() + QPoint(qRound(localAnchor.x()), qRound(localAnchor.y()));
 }
 
 void PetWindow::playState(const QString &stateName, bool centerWindow)
@@ -869,9 +890,11 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
 
 QSize PetWindow::animationTargetSize() const
 {
-    const int sideLength = qRound(BaseAnimationTargetSize * m_appConfig.scale);
-    const int boundedSideLength = qBound(BaseAnimationTargetSize / 2, sideLength, BaseAnimationTargetSize * 2);
-    return QSize(boundedSideLength, boundedSideLength);
+    const CharacterBase &base = m_characterPackage.base;
+    const double totalScale = base.scale * m_appConfig.scale;
+    return QSize(
+        boundedAnimationTargetSide(static_cast<double>(base.width) * totalScale),
+        boundedAnimationTargetSide(static_cast<double>(base.height) * totalScale));
 }
 
 int PetWindow::effectiveAnimationFps(int fps) const
