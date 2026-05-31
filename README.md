@@ -10,7 +10,7 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 鼠标拖动
 - 右键菜单退出和状态测试
 - 置顶切换
-- `shiroko` 角色包读取
+- `resources/characters/shiroko` 默认角色包读取
 - PNG 序列帧动画播放
 - `idle` / `talk` / `think` / `sleep` / `happy` / `drag` / `error` 状态
 - 托盘显示、隐藏、退出
@@ -74,13 +74,13 @@ cmake --build build/mingw-debug
 当前默认角色包位于：
 
 ```text
-shiroko/
+resources/characters/shiroko/
 ```
 
-基本结构：
+角色包按 `resources/characters/<characterId>/` 组织，后续新增角色包时放在同级子目录。基本结构：
 
 ```text
-shiroko/
+resources/characters/shiroko/
   character.json
   preview.png
   idle/
@@ -93,12 +93,6 @@ shiroko/
 ```
 
 当前素材版本为 `2.1.0-stable`，所有帧使用 512x512 透明画布。当前实现会加载当前角色包的各状态帧并按 `character.json` 中的 FPS 播放。
-
-后续计划将默认角色包位置整理为：
-
-```text
-resources/characters/shiroko/
-```
 
 ## 配置和日志
 

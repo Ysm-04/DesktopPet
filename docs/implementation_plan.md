@@ -84,12 +84,12 @@ cmake -S . -B build/mingw-debug -G Ninja `
 
 ## 3. 角色包约定
 
-`shiroko` 目录作为当前默认角色包。
+`resources/characters/shiroko` 目录作为当前默认角色包。角色包按 `resources/characters/<characterId>/` 组织，后续新增角色包时放在同级子目录。
 
 已检查到的结构：
 
 ```text
-shiroko/
+resources/characters/shiroko/
  ├── character.json
  ├── preview.png
  ├── README.md
@@ -150,7 +150,7 @@ error ：20 帧
 2. 创建 CMakeLists.txt
 3. 创建 main.cpp
 4. 创建 src/、resources/ 等基础目录
-5. 决定 shiroko 是否移动到 resources/characters/shiroko
+5. 建立 resources/characters/<characterId> 角色包目录约定
 6. 创建最小 README.md
 7. 确认 LICENSE 是否采用 MIT
 ```
@@ -169,7 +169,7 @@ error ：20 帧
 ```text
 1. 是否创建 .gitignore
 2. 是否创建 MIT LICENSE
-3. 是否将 shiroko 移动到 resources/characters/shiroko
+3. 是否将默认角色包作为文件型内置资源保留在 resources/characters/shiroko
 4. 是否立即创建最小 Qt 工程
 ```
 
@@ -236,7 +236,7 @@ error ：20 帧
 ```text
 1. CharacterPackage
 2. CharacterPackageLoader
-3. 读取 shiroko/character.json
+3. 读取 resources/characters/shiroko/character.json
 4. 校验 schemaVersion
 5. 校验 defaultState
 6. 校验 states
@@ -261,7 +261,7 @@ error ：20 帧
 验收标准：
 
 ```text
-1. 能读取 shiroko/character.json
+1. 能读取 resources/characters/shiroko/character.json
 2. 能获取 idle 状态帧路径列表
 3. 能显示 idle 第一帧
 4. 不在 paintEvent 中加载图片
@@ -531,7 +531,7 @@ error ：20 帧
 
 3. 阶段 2A 角色包最小读取：
    已有 CharacterPackage / CharacterPackageLoader
-   能读取 shiroko/character.json 并收集状态帧路径
+   能读取 resources/characters/shiroko/character.json 并收集状态帧路径
 
 4. 阶段 2B idle 帧动画：
    已新增 AnimationClip / FrameAnimator
@@ -574,11 +574,9 @@ error ：20 帧
 当前实现与计划仍存在差异：
 
 ```text
-1. shiroko 角色包仍位于项目根目录 shiroko/，尚未移动到 resources/characters/shiroko
-2. SettingsDialog 仍是最小设置界面，尚未包含 AI 测试按钮、角色选择和更完整的分区布局
-3. CharacterPackage 尚未解析并应用 character.json 中的 base、anchor、bubble offset
-4. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
-5. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
+1. SettingsDialog 仍是最小设置界面，尚未包含完整角色切换流程和更完整的分区布局
+2. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
+3. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
 ```
 
 ---
@@ -612,10 +610,8 @@ error ：20 帧
 ```text
 1. 完善设置界面：
    - AI 配置和测试
-   - 角色包路径和角色切换
-2. 解析并应用角色包 base / anchor / bubble 配置
-3. 评估是否移动 shiroko 到 resources/characters/shiroko
-4. 补一轮可重复的稳定性与性能测试记录
+   - 角色包导入和角色切换
+2. 补一轮可重复的稳定性与性能测试记录
 ```
 
 ---
@@ -625,8 +621,7 @@ error ：20 帧
 后续开始写代码前，需要逐项确认：
 
 ```text
-1. 是否把 shiroko 移动到 resources/characters/shiroko
-2. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-3. 设置页下一步先做 AI 测试入口，还是先做角色包配置
-4. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
+1. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
+2. 设置页下一步先做 AI 测试入口，还是先做角色包配置
+3. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
 ```

@@ -2,6 +2,7 @@
 
 #include "../ai/AIProviderFactory.h"
 #include "../ai/LLMTypes.h"
+#include "../character/CharacterPackageRepository.h"
 #include "../config/SecretStore.h"
 
 #include <QCheckBox>
@@ -22,6 +23,7 @@
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtGlobal>
@@ -259,7 +261,23 @@ SettingsDialog::SettingsDialog(
     auto *chatPage = new QWidget(this);
     chatPage->setLayout(chatPageLayout);
 
-    m_characterComboBox->addItem(QStringLiteral("shiroko"), QStringLiteral("shiroko"));
+    QStringList characterIds = CharacterPackageRepository::availablePackageIds();
+    if (characterIds.isEmpty())
+    {
+        characterIds.append(CharacterPackageRepository::defaultCharacterId());
+    }
+
+    for (const QString &characterId : characterIds)
+    {
+        m_characterComboBox->addItem(characterId, characterId);
+    }
+
+    const int defaultCharacterIndex = m_characterComboBox->findData(CharacterPackageRepository::defaultCharacterId());
+    if (defaultCharacterIndex >= 0)
+    {
+        m_characterComboBox->setCurrentIndex(defaultCharacterIndex);
+    }
+
     m_characterComboBox->setEnabled(false);
     m_characterComboBox->setToolTip(QStringLiteral("角色选择将在多角色资源配置接入后启用。"));
 

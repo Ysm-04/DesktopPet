@@ -1,5 +1,6 @@
 #include "TrayController.h"
 
+#include "../character/CharacterPackageRepository.h"
 #include "../ui/PetWindow.h"
 
 #include <QAction>
@@ -9,14 +10,9 @@
 
 namespace
 {
-QString trayIconPath()
-{
-    return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko/preview.png");
-}
-
 QIcon loadTrayIcon()
 {
-    const QPixmap pixmap(trayIconPath());
+    const QPixmap pixmap(CharacterPackageRepository::defaultPreviewPath());
     if (!pixmap.isNull())
     {
         return QIcon(pixmap);

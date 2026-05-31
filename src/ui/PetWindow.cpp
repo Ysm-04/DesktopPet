@@ -4,6 +4,7 @@
 #include "../ai/ConversationManager.h"
 #include "../ai/ConversationStore.h"
 #include "../character/CharacterPackageLoader.h"
+#include "../character/CharacterPackageRepository.h"
 #include "../config/ConfigManager.h"
 #include "../util/Logger.h"
 #include "ChatBubble.h"
@@ -34,16 +35,6 @@
 
 namespace
 {
-QString characterPackagePath()
-{
-    return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko");
-}
-
-QString previewImagePath()
-{
-    return QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/shiroko/preview.png");
-}
-
 constexpr int MaxUserMessageLength = 4000;
 constexpr int ChatInputLowerOffsetY = 48;
 constexpr int StreamBubbleUpdateIntervalMs = 80;
@@ -737,7 +728,7 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
 void PetWindow::loadInitialImage()
 {
     QString loadError;
-    m_characterPackage = CharacterPackageLoader::load(characterPackagePath(), &loadError);
+    m_characterPackage = CharacterPackageLoader::load(CharacterPackageRepository::defaultPackagePath(), &loadError);
     if (!loadError.isEmpty())
     {
         Logger::warning(QStringLiteral("Character package load failed: ") + loadError);
@@ -751,7 +742,7 @@ void PetWindow::loadInitialImage()
         return;
     }
 
-    setDisplayImage(previewImagePath(), true);
+    setDisplayImage(CharacterPackageRepository::defaultPreviewPath(), true);
 }
 
 void PetWindow::buildAnimationClips()

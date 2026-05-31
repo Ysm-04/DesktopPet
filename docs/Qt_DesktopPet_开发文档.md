@@ -203,7 +203,7 @@ DesktopPet/
  ├── resources/
  │   ├── icons/
  │   └── characters/
- │       └── default_pet/
+ │       └── <character_id>/
  │           ├── character.json
  │           ├── preview.png
  │           ├── idle/
@@ -566,8 +566,8 @@ PNG 图片序列 + character.json
 示例：
 
 ```text
-characters/
- └── default_pet/
+resources/characters/
+ └── <character_id>/
      ├── character.json
      ├── preview.png
      ├── idle/
@@ -600,7 +600,7 @@ characters/
 ```json
 {
   "schemaVersion": 1,
-  "id": "default_pet",
+  "id": "shiroko",
   "displayName": "默认桌宠",
   "author": "DesktopPet",
   "version": "1.0.0",
@@ -1207,7 +1207,7 @@ conversation_history.json
     "locked": false
   },
   "character": {
-    "current": "default_pet"
+    "current": "shiroko"
   },
   "performance": {
     "mode": "standard",
@@ -1471,7 +1471,7 @@ void Example::run()
 ```text
 1. 创建 CharacterPackage
 2. 创建 CharacterPackageLoader
-3. 读取 resources/characters/default_pet/character.json
+3. 读取 resources/characters/shiroko/character.json
 4. 解析 states
 5. 加载 idle 状态帧
 6. 校验资源包
@@ -1684,7 +1684,6 @@ MIT License 开源
 ```text
 1. 设置页内 AI 连通性测试
 2. 对话历史内存上限和可选持久化
-3. character.json 中 base、anchor、bubble offset 的解析与应用
-4. 角色包位置整理和角色切换
-5. 发布前素材授权确认与打包验证
+3. 角色包导入和角色切换
+4. 发布前素材授权确认与打包验证
 ```

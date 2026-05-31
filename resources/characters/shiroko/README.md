@@ -2,6 +2,6 @@
 
 按动画素材规范重新整理：所有帧均为 512x512 透明画布，未裁切角色本体；帧编号连续。
 
-帧数：idle 30，talk 30，think 30，sleep 30，drag 30，happy 20，error 20。
+帧数：idle 30，talk 20，think 30，sleep 30，drag 30，happy 20，error 20。
 
 说明：本版采用稳定坐标系与关键帧扩展方式生成，用于动画调试和桌宠加载器测试。

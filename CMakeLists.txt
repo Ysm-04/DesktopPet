@@ -32,6 +32,8 @@ qt_add_executable(QtDesktopPet
     src/character/CharacterPackage.cpp
     src/character/CharacterPackageLoader.h
     src/character/CharacterPackageLoader.cpp
+    src/character/CharacterPackageRepository.h
+    src/character/CharacterPackageRepository.cpp
     src/character/FrameAnimator.h
     src/character/FrameAnimator.cpp
     src/config/AIConfig.h
