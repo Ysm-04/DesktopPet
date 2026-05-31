@@ -25,6 +25,11 @@ bool AnimationClip::isValid() const
     return fps > 0 && (!m_frames.isEmpty() || !m_framePaths.isEmpty());
 }
 
+bool AnimationClip::isLoaded() const
+{
+    return !m_frames.isEmpty();
+}
+
 bool AnimationClip::ensureLoaded()
 {
     if (m_frames.isEmpty())
@@ -33,6 +38,31 @@ bool AnimationClip::ensureLoaded()
     }
 
     return !m_frames.isEmpty();
+}
+
+void AnimationClip::unloadFrames()
+{
+    m_frames.clear();
+    m_frames.squeeze();
+}
+
+qint64 AnimationClip::estimatedMemoryBytes() const
+{
+    qint64 totalBytes = 0;
+    for (const QPixmap &frame : m_frames)
+    {
+        totalBytes += static_cast<qint64>(frame.width())
+            * static_cast<qint64>(frame.height())
+            * static_cast<qint64>(frame.depth())
+            / 8;
+    }
+
+    return totalBytes;
+}
+
+int AnimationClip::loadedFrameCount() const
+{
+    return m_frames.size();
 }
 
 void AnimationClip::loadFrames()

@@ -22,5 +22,5 @@ public:
 
 private:
     QString configDirectoryPath() const;
-    void backupBrokenConfig(const QString &filePath) const;
+    void backupBrokenConfig(const QString &filePath, const QString &configName) const;
 };

@@ -80,6 +80,14 @@ ChatBubble::ChatBubble(QWidget *parent)
     });
 }
 
+ChatBubble::~ChatBubble()
+{
+    if (qApp != nullptr)
+    {
+        qApp->removeEventFilter(this);
+    }
+}
+
 void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs, bool scrollToBottom)
 {
     m_dismissOnExternalInteraction = false;

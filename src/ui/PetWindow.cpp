@@ -19,6 +19,7 @@
 #include <QDialog>
 #include <QGuiApplication>
 #include <QHideEvent>
+#include <QList>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPixmap>
@@ -27,10 +28,12 @@
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QSet>
+#include <QShowEvent>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QtGlobal>
 
+#include <algorithm>
 #include <memory>
 
 namespace
@@ -42,6 +45,9 @@ constexpr int MinAnimationTargetSide = 32;
 constexpr int MaxAnimationTargetSide = 2048;
 constexpr int LowPowerFpsCap = 6;
 constexpr int ChatFinishedReturnDelayMs = 1500;
+constexpr int StandardPrewarmIntervalMs = 800;
+constexpr int LowPowerPrewarmIntervalMs = 1500;
+constexpr qint64 BytesPerMegabyte = 1024 * 1024;
 
 int boundedAnimationTargetSide(double sideLength)
 {
@@ -58,6 +64,11 @@ int evenBoundedHistoryLimit(int value, int minimum, int maximum)
     return boundedValue - (boundedValue % 2);
 }
 
+QString megabytesText(qint64 bytes)
+{
+    return QString::number(static_cast<double>(bytes) / static_cast<double>(BytesPerMegabyte), 'f', 1);
+}
+
 AppConfig normalizedAppConfig(AppConfig config)
 {
     config.scale = qBound(0.5, config.scale, 2.0);
@@ -66,6 +77,7 @@ AppConfig normalizedAppConfig(AppConfig config)
     {
         config.performanceMode = QStringLiteral("standard");
     }
+    config.animationCacheLimitMb = qBound(64, config.animationCacheLimitMb, 1024);
     config.requestContextMessageLimit = qBound(0, config.requestContextMessageLimit, 200);
     config.memoryHistoryMessageLimit = evenBoundedHistoryLimit(config.memoryHistoryMessageLimit, 2, 5000);
     config.savedHistoryMessageLimit = evenBoundedHistoryLimit(config.savedHistoryMessageLimit, 2, 10000);
@@ -134,6 +146,11 @@ PetWindow::PetWindow(QWidget *parent)
         flushStreamingBubble(false);
     });
 
+    m_animationPrewarmTimer.setSingleShot(true);
+    connect(&m_animationPrewarmTimer, &QTimer::timeout, this, [this]() {
+        processAnimationPrewarm();
+    });
+
     QPointer<PetWindow> window(this);
     m_chatInputDialog->setSubmitCallback([window](const QString &message) {
         return !window.isNull() && window->submitChatMessage(message);
@@ -153,6 +170,10 @@ void PetWindow::applyAppConfig(const AppConfig &config)
     const bool rebuildClips = !qFuzzyCompare(m_appConfig.scale, normalizedConfig.scale)
         || m_appConfig.performanceMode != normalizedConfig.performanceMode
         || m_appConfig.enableLazyLoad != normalizedConfig.enableLazyLoad;
+    const bool animationCachePolicyChanged =
+        m_appConfig.enableAnimationPrewarm != normalizedConfig.enableAnimationPrewarm
+        || m_appConfig.animationCacheLimitMb != normalizedConfig.animationCacheLimitMb
+        || m_appConfig.unloadAnimationsWhenHidden != normalizedConfig.unloadAnimationsWhenHidden;
     const bool loadPersistedHistory = !m_appConfig.saveConversationHistory
         && normalizedConfig.saveConversationHistory;
 
@@ -182,6 +203,21 @@ void PetWindow::applyAppConfig(const AppConfig &config)
             playResolvedState(m_stateMachine.requestState(nextState), false);
         }
     }
+
+    if (isAnimationCacheManagementEnabled())
+    {
+        if (animationCachePolicyChanged && !rebuildClips)
+        {
+            m_animationPrewarmAttemptedStates.clear();
+            m_animationPrewarmQueue.clear();
+            trimAnimationCache(QStringLiteral("config updated"));
+        }
+        scheduleAnimationPrewarm();
+    }
+    else
+    {
+        stopAnimationPrewarm();
+    }
 }
 
 AppConfig PetWindow::currentAppConfig() const
@@ -203,6 +239,7 @@ void PetWindow::pauseAnimation()
     m_returnToIdleAfterResume = m_behaviorReturnTimer.isActive();
     m_idleBehaviorTimer.stop();
     m_behaviorReturnTimer.stop();
+    stopAnimationPrewarm();
     m_frameAnimator.pause();
 }
 
@@ -220,6 +257,7 @@ void PetWindow::resumeAnimation()
     }
 
     m_returnToIdleAfterResume = false;
+    scheduleAnimationPrewarm();
 }
 
 void PetWindow::showBubbleMessage(const QString &message)
@@ -381,6 +419,7 @@ bool PetWindow::submitChatMessage(const QString &message)
         return false;
     }
 
+    stopAnimationPrewarm();
     playState(QStringLiteral("think"), false);
     m_streamingAssistantText.clear();
     m_streamBubbleUpdateTimer.stop();
@@ -617,6 +656,7 @@ void PetWindow::finishStreamingChat()
 {
     m_streamingChatActive = false;
     m_streamingTalkStarted = false;
+    scheduleAnimationPrewarm();
 }
 
 void PetWindow::cancelStreamingChat()
@@ -625,6 +665,7 @@ void PetWindow::cancelStreamingChat()
     m_streamingAssistantText.clear();
     m_streamingChatActive = false;
     m_streamingTalkStarted = false;
+    scheduleAnimationPrewarm();
 }
 
 void PetWindow::resetBubbleAutoHideTimer()
@@ -643,6 +684,7 @@ QPoint PetWindow::chatInputAnchorPosition() const
 void PetWindow::hideEvent(QHideEvent *event)
 {
     m_streamBubbleUpdateTimer.stop();
+    stopAnimationPrewarm();
     if (m_chatBubble)
     {
         m_chatBubble->hideBubble();
@@ -656,7 +698,18 @@ void PetWindow::hideEvent(QHideEvent *event)
         m_chatHistoryPanel->hide();
     }
 
+    if (isAnimationCacheManagementEnabled() && m_appConfig.unloadAnimationsWhenHidden)
+    {
+        unloadNonProtectedAnimationCache(QStringLiteral("window hidden"));
+    }
+
     QWidget::hideEvent(event);
+}
+
+void PetWindow::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    scheduleAnimationPrewarm();
 }
 
 void PetWindow::mouseDoubleClickEvent(QMouseEvent *event)
@@ -702,6 +755,7 @@ void PetWindow::mousePressEvent(QMouseEvent *event)
     {
         m_dragging = true;
         m_dragOffset = event->globalPosition().toPoint() - frameGeometry().topLeft();
+        stopAnimationPrewarm();
         playResolvedState(m_stateMachine.beginDrag(), false);
         event->accept();
         return;
@@ -718,6 +772,7 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
     {
         m_dragging = false;
         playResolvedState(m_stateMachine.endDrag(), false);
+        scheduleAnimationPrewarm();
         event->accept();
         return;
     }
@@ -747,6 +802,11 @@ void PetWindow::loadInitialImage()
 
 void PetWindow::buildAnimationClips()
 {
+    stopAnimationPrewarm();
+    m_animationPrewarmQueue.clear();
+    m_animationPrewarmAttemptedStates.clear();
+    m_clipLastAccessSerial.clear();
+    m_clipAccessSerial = 0;
     m_clips.clear();
 
     QSet<QString> availableStates;
@@ -849,6 +909,7 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
 
     if (m_frameAnimator.currentStateName() == stateName && m_frameAnimator.isPlaying())
     {
+        noteAnimationClipAccess(stateName);
         return;
     }
 
@@ -859,9 +920,20 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
     }
 
     AnimationClip *clip = &clipIterator.value();
+    const bool wasLoaded = clip->isLoaded();
     if (!clip->ensureLoaded())
     {
+        Logger::warning(QStringLiteral("Animation state failed to load: state=%1").arg(stateName));
         return;
+    }
+
+    noteAnimationClipAccess(stateName);
+    if (!wasLoaded)
+    {
+        Logger::info(QStringLiteral("Animation state loaded: state=%1 frames=%2 cacheMb=%3")
+            .arg(stateName)
+            .arg(QString::number(clip->loadedFrameCount()))
+            .arg(megabytesText(clip->estimatedMemoryBytes())));
     }
 
     m_idleBehaviorTimer.stop();
@@ -877,6 +949,9 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
     {
         m_behaviorReturnTimer.start(4000);
     }
+
+    trimAnimationCache(QStringLiteral("state played"));
+    scheduleAnimationPrewarm();
 }
 
 QSize PetWindow::animationTargetSize() const
@@ -901,6 +976,311 @@ int PetWindow::effectiveAnimationFps(int fps) const
 bool PetWindow::isLowPowerMode() const
 {
     return m_appConfig.performanceMode == QStringLiteral("low-power");
+}
+
+bool PetWindow::isAnimationCacheManagementEnabled() const
+{
+    return m_appConfig.enableLazyLoad;
+}
+
+void PetWindow::rebuildAnimationPrewarmQueue()
+{
+    m_animationPrewarmQueue.clear();
+    if (!isAnimationCacheManagementEnabled() || !m_appConfig.enableAnimationPrewarm)
+    {
+        return;
+    }
+
+    const auto appendStateIfNeeded = [this](const QString &stateName) {
+        if (stateName == QStringLiteral("idle")
+            || m_animationPrewarmQueue.contains(stateName)
+            || m_animationPrewarmAttemptedStates.contains(stateName))
+        {
+            return;
+        }
+
+        const auto iterator = m_clips.constFind(stateName);
+        if (iterator != m_clips.constEnd() && !iterator.value().isLoaded())
+        {
+            m_animationPrewarmQueue.append(stateName);
+        }
+    };
+
+    appendStateIfNeeded(QStringLiteral("drag"));
+    appendStateIfNeeded(QStringLiteral("think"));
+    appendStateIfNeeded(QStringLiteral("talk"));
+
+    QStringList stateNames = m_clips.keys();
+    stateNames.sort();
+    for (const QString &stateName : stateNames)
+    {
+        appendStateIfNeeded(stateName);
+    }
+}
+
+void PetWindow::scheduleAnimationPrewarm()
+{
+    if (!isAnimationCacheManagementEnabled() || !m_appConfig.enableAnimationPrewarm)
+    {
+        stopAnimationPrewarm();
+        return;
+    }
+
+    if (!isVisible() || m_dragging || m_streamingChatActive || hasActiveAIRequest())
+    {
+        stopAnimationPrewarm();
+        return;
+    }
+
+    if (m_animationPrewarmQueue.isEmpty())
+    {
+        rebuildAnimationPrewarmQueue();
+    }
+
+    if (m_animationPrewarmQueue.isEmpty() || m_animationPrewarmTimer.isActive())
+    {
+        return;
+    }
+
+    m_animationPrewarmTimer.start(isLowPowerMode() ? LowPowerPrewarmIntervalMs : StandardPrewarmIntervalMs);
+}
+
+void PetWindow::stopAnimationPrewarm()
+{
+    m_animationPrewarmTimer.stop();
+}
+
+void PetWindow::processAnimationPrewarm()
+{
+    m_animationPrewarmTimer.stop();
+    if (!isAnimationCacheManagementEnabled() || !m_appConfig.enableAnimationPrewarm)
+    {
+        return;
+    }
+
+    if (!isVisible() || m_dragging || m_streamingChatActive || hasActiveAIRequest())
+    {
+        return;
+    }
+
+    while (!m_animationPrewarmQueue.isEmpty())
+    {
+        const QString stateName = m_animationPrewarmQueue.takeFirst();
+        m_animationPrewarmAttemptedStates.insert(stateName);
+        auto clipIterator = m_clips.find(stateName);
+        if (clipIterator == m_clips.end() || clipIterator.value().isLoaded())
+        {
+            continue;
+        }
+
+        AnimationClip &clip = clipIterator.value();
+        if (!clip.ensureLoaded())
+        {
+            Logger::warning(QStringLiteral("Animation state prewarm failed: state=%1").arg(stateName));
+            continue;
+        }
+
+        noteAnimationClipAccess(stateName);
+        Logger::info(QStringLiteral("Animation state prewarmed: state=%1 frames=%2 cacheMb=%3")
+            .arg(stateName)
+            .arg(QString::number(clip.loadedFrameCount()))
+            .arg(megabytesText(clip.estimatedMemoryBytes())));
+        trimAnimationCache(QStringLiteral("prewarm"));
+        break;
+    }
+
+    scheduleAnimationPrewarm();
+}
+
+void PetWindow::noteAnimationClipAccess(const QString &stateName)
+{
+    if (!m_clips.contains(stateName))
+    {
+        return;
+    }
+
+    ++m_clipAccessSerial;
+    m_clipLastAccessSerial.insert(stateName, m_clipAccessSerial);
+}
+
+qint64 PetWindow::animationCacheLimitBytes() const
+{
+    return static_cast<qint64>(m_appConfig.animationCacheLimitMb) * BytesPerMegabyte;
+}
+
+qint64 PetWindow::loadedAnimationCacheBytes() const
+{
+    qint64 totalBytes = 0;
+    for (auto iterator = m_clips.constBegin(); iterator != m_clips.constEnd(); ++iterator)
+    {
+        totalBytes += iterator.value().estimatedMemoryBytes();
+    }
+
+    return totalBytes;
+}
+
+int PetWindow::loadedAnimationClipCount() const
+{
+    int count = 0;
+    for (auto iterator = m_clips.constBegin(); iterator != m_clips.constEnd(); ++iterator)
+    {
+        if (iterator.value().isLoaded())
+        {
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+QSet<QString> PetWindow::protectedAnimationStates() const
+{
+    QSet<QString> states;
+    states.insert(QStringLiteral("idle"));
+
+    const QString animatorState = m_frameAnimator.currentStateName();
+    if (!animatorState.isEmpty())
+    {
+        states.insert(animatorState);
+    }
+
+    const QString stateMachineState = m_stateMachine.currentState();
+    if (!stateMachineState.isEmpty())
+    {
+        states.insert(stateMachineState);
+    }
+
+    if (m_streamingChatActive || hasActiveAIRequest())
+    {
+        states.insert(QStringLiteral("think"));
+        states.insert(QStringLiteral("talk"));
+    }
+
+    if (m_dragging)
+    {
+        states.insert(QStringLiteral("drag"));
+    }
+
+    return states;
+}
+
+void PetWindow::trimAnimationCache(const QString &reason)
+{
+    if (!isAnimationCacheManagementEnabled())
+    {
+        return;
+    }
+
+    qint64 totalBytes = loadedAnimationCacheBytes();
+    const qint64 limitBytes = animationCacheLimitBytes();
+    if (totalBytes <= limitBytes)
+    {
+        return;
+    }
+
+    struct UnloadCandidate
+    {
+        QString stateName;
+        qint64 lastAccessSerial = 0;
+    };
+
+    const QSet<QString> protectedStates = protectedAnimationStates();
+    QList<UnloadCandidate> candidates;
+    QStringList protectedLoadedStates;
+    for (auto iterator = m_clips.constBegin(); iterator != m_clips.constEnd(); ++iterator)
+    {
+        if (!iterator.value().isLoaded())
+        {
+            continue;
+        }
+
+        if (protectedStates.contains(iterator.key()))
+        {
+            protectedLoadedStates.append(iterator.key());
+            continue;
+        }
+
+        candidates.append({iterator.key(), m_clipLastAccessSerial.value(iterator.key(), 0)});
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const UnloadCandidate &left, const UnloadCandidate &right) {
+        if (left.lastAccessSerial == right.lastAccessSerial)
+        {
+            return left.stateName < right.stateName;
+        }
+
+        return left.lastAccessSerial < right.lastAccessSerial;
+    });
+
+    for (const UnloadCandidate &candidate : candidates)
+    {
+        if (totalBytes <= limitBytes)
+        {
+            break;
+        }
+
+        auto clipIterator = m_clips.find(candidate.stateName);
+        if (clipIterator == m_clips.end() || !clipIterator.value().isLoaded())
+        {
+            continue;
+        }
+
+        const qint64 freedBytes = clipIterator.value().estimatedMemoryBytes();
+        clipIterator.value().unloadFrames();
+        m_clipLastAccessSerial.remove(candidate.stateName);
+        totalBytes -= freedBytes;
+        Logger::info(QStringLiteral("Animation state unloaded: state=%1 reason=%2 freedMb=%3 cacheMb=%4 loadedStates=%5")
+            .arg(candidate.stateName)
+            .arg(reason)
+            .arg(megabytesText(freedBytes))
+            .arg(megabytesText(totalBytes))
+            .arg(QString::number(loadedAnimationClipCount())));
+    }
+
+    if (totalBytes > limitBytes)
+    {
+        protectedLoadedStates.sort();
+        Logger::warning(QStringLiteral("Animation cache remains over limit: reason=%1 cacheMb=%2 limitMb=%3 protectedStates=%4")
+            .arg(reason)
+            .arg(megabytesText(totalBytes))
+            .arg(QString::number(m_appConfig.animationCacheLimitMb))
+            .arg(protectedLoadedStates.join(QStringLiteral(","))));
+    }
+}
+
+void PetWindow::unloadNonProtectedAnimationCache(const QString &reason)
+{
+    if (!isAnimationCacheManagementEnabled())
+    {
+        return;
+    }
+
+    const QSet<QString> protectedStates = protectedAnimationStates();
+    for (auto iterator = m_clips.begin(); iterator != m_clips.end(); ++iterator)
+    {
+        if (!iterator.value().isLoaded())
+        {
+            continue;
+        }
+
+        if (protectedStates.contains(iterator.key()))
+        {
+            Logger::info(QStringLiteral("Animation state kept loaded: state=%1 reason=%2")
+                .arg(iterator.key())
+                .arg(reason));
+            continue;
+        }
+
+        const qint64 freedBytes = iterator.value().estimatedMemoryBytes();
+        iterator.value().unloadFrames();
+        m_clipLastAccessSerial.remove(iterator.key());
+        Logger::info(QStringLiteral("Animation state unloaded: state=%1 reason=%2 freedMb=%3 cacheMb=%4 loadedStates=%5")
+            .arg(iterator.key())
+            .arg(reason)
+            .arg(megabytesText(freedBytes))
+            .arg(megabytesText(loadedAnimationCacheBytes()))
+            .arg(QString::number(loadedAnimationClipCount())));
+    }
 }
 
 void PetWindow::scheduleIdleBehavior()

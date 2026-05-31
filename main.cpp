@@ -1,17 +1,25 @@
 #include <QApplication>
 #include <QCoreApplication>
+#include <QIcon>
 #include <QObject>
 
 #include "src/config/ConfigManager.h"
 #include "src/tray/TrayController.h"
 #include "src/ui/PetWindow.h"
 #include "src/util/Logger.h"
+#include "src/util/ResourcePaths.h"
 
 int main(int argc, char *argv[])
 {
     QApplication app(argc, argv);
     QApplication::setApplicationName("QtDesktopPet");
     QApplication::setOrganizationName("QtDesktopPet");
+
+    const QIcon appIcon(ResourcePaths::appIconPath());
+    if (!appIcon.isNull())
+    {
+        QApplication::setWindowIcon(appIcon);
+    }
 
     Logger::info(QStringLiteral("Application started."));
 

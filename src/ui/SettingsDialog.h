@@ -31,11 +31,15 @@ public:
     AIConfigStore aiConfigStore() const;
     AppConfig appConfig() const;
 
+protected:
+    void accept() override;
+
 private:
     void cacheCurrentProvider();
     void loadProviderConfig(const QString &provider);
     void switchProvider(const QString &provider);
-    AIConfig configFromForm(const QString &provider) const;
+    bool buildAIConfigStore(AIConfigStore *store, QString *errorMessage) const;
+    AIConfig configFromForm(const QString &provider, QString *errorMessage = nullptr) const;
     AIConfig runtimeConfigFromForm(const QString &provider) const;
     QString decryptedApiKey(const AIConfig &config) const;
     void testConnection();
@@ -57,6 +61,9 @@ private:
     QComboBox *m_performanceModeComboBox = nullptr;
     QCheckBox *m_pauseWhenHiddenCheckBox = nullptr;
     QCheckBox *m_enableLazyLoadCheckBox = nullptr;
+    QCheckBox *m_enableAnimationPrewarmCheckBox = nullptr;
+    QSpinBox *m_animationCacheLimitSpinBox = nullptr;
+    QCheckBox *m_unloadAnimationsWhenHiddenCheckBox = nullptr;
     QSpinBox *m_requestContextMessageLimitSpinBox = nullptr;
     QSpinBox *m_memoryHistoryMessageLimitSpinBox = nullptr;
     QCheckBox *m_saveConversationHistoryCheckBox = nullptr;
@@ -65,9 +72,11 @@ private:
     QLabel *m_clearConversationStatusLabel = nullptr;
     QComboBox *m_characterComboBox = nullptr;
     AIConfigStore m_configStore;
+    AIConfigStore m_acceptedConfigStore;
     AppConfig m_appConfig;
     QString m_currentProvider;
     std::function<bool()> m_aiTestBlocked;
     std::function<void()> m_clearConversationHistory;
     std::unique_ptr<LLMProvider> m_testProvider;
+    bool m_hasAcceptedConfigStore = false;
 };

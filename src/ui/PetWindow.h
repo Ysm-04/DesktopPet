@@ -8,8 +8,11 @@
 
 #include <QMap>
 #include <QPoint>
+#include <QSet>
+#include <QStringList>
 #include <QTimer>
 #include <QWidget>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -17,6 +20,7 @@ class QMenu;
 class QHideEvent;
 class QMoveEvent;
 class QPixmap;
+class QShowEvent;
 class ChatBubble;
 class ChatHistoryPanel;
 class ChatInputDialog;
@@ -41,6 +45,7 @@ public:
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
     void hideEvent(QHideEvent *event) override;
+    void showEvent(QShowEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
@@ -75,6 +80,18 @@ private:
     QSize animationTargetSize() const;
     int effectiveAnimationFps(int fps) const;
     bool isLowPowerMode() const;
+    bool isAnimationCacheManagementEnabled() const;
+    void rebuildAnimationPrewarmQueue();
+    void scheduleAnimationPrewarm();
+    void stopAnimationPrewarm();
+    void processAnimationPrewarm();
+    void noteAnimationClipAccess(const QString &stateName);
+    qint64 animationCacheLimitBytes() const;
+    qint64 loadedAnimationCacheBytes() const;
+    int loadedAnimationClipCount() const;
+    QSet<QString> protectedAnimationStates() const;
+    void trimAnimationCache(const QString &reason);
+    void unloadNonProtectedAnimationCache(const QString &reason);
     void scheduleIdleBehavior();
     void playIdleBehavior();
     void returnToIdleFromBehavior();
@@ -92,13 +109,18 @@ private:
     QTimer m_idleBehaviorTimer;
     QTimer m_behaviorReturnTimer;
     QTimer m_streamBubbleUpdateTimer;
+    QTimer m_animationPrewarmTimer;
     AppConfig m_appConfig;
     CharacterPackage m_characterPackage;
     QMap<QString, AnimationClip> m_clips;
+    QMap<QString, qint64> m_clipLastAccessSerial;
+    QSet<QString> m_animationPrewarmAttemptedStates;
     FrameAnimator m_frameAnimator;
     PetStateMachine m_stateMachine;
     QPoint m_dragOffset;
     QString m_streamingAssistantText;
+    QStringList m_animationPrewarmQueue;
+    qint64 m_clipAccessSerial = 0;
     bool m_dragging;
     bool m_alwaysOnTop;
     bool m_centerNextFrame;

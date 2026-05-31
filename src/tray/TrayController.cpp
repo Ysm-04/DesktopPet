@@ -2,16 +2,24 @@
 
 #include "../character/CharacterPackageRepository.h"
 #include "../ui/PetWindow.h"
+#include "../util/ResourcePaths.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QIcon>
 #include <QPixmap>
+#include <QString>
 
 namespace
 {
 QIcon loadTrayIcon()
 {
+    const QIcon appIcon(ResourcePaths::appIconPath());
+    if (!appIcon.isNull())
+    {
+        return appIcon;
+    }
+
     const QPixmap pixmap(CharacterPackageRepository::defaultPreviewPath());
     if (!pixmap.isNull())
     {

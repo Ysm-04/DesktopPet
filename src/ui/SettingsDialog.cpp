@@ -81,6 +81,9 @@ SettingsDialog::SettingsDialog(
     , m_performanceModeComboBox(new QComboBox(this))
     , m_pauseWhenHiddenCheckBox(new QCheckBox(QStringLiteral("隐藏到托盘时暂停动画"), this))
     , m_enableLazyLoadCheckBox(new QCheckBox(QStringLiteral("启用动画懒加载"), this))
+    , m_enableAnimationPrewarmCheckBox(new QCheckBox(QStringLiteral("启动后预热常用动画"), this))
+    , m_animationCacheLimitSpinBox(new QSpinBox(this))
+    , m_unloadAnimationsWhenHiddenCheckBox(new QCheckBox(QStringLiteral("隐藏时释放动画缓存"), this))
     , m_requestContextMessageLimitSpinBox(new QSpinBox(this))
     , m_memoryHistoryMessageLimitSpinBox(new QSpinBox(this))
     , m_saveConversationHistoryCheckBox(new QCheckBox(QStringLiteral("保存聊天记录到本地"), this))
@@ -135,6 +138,12 @@ SettingsDialog::SettingsDialog(
 
     m_pauseWhenHiddenCheckBox->setChecked(m_appConfig.pauseWhenHidden);
     m_enableLazyLoadCheckBox->setChecked(m_appConfig.enableLazyLoad);
+    m_enableAnimationPrewarmCheckBox->setChecked(m_appConfig.enableAnimationPrewarm);
+    m_animationCacheLimitSpinBox->setRange(64, 1024);
+    m_animationCacheLimitSpinBox->setSingleStep(16);
+    m_animationCacheLimitSpinBox->setSuffix(QStringLiteral(" MB"));
+    m_animationCacheLimitSpinBox->setValue(qBound(64, m_appConfig.animationCacheLimitMb, 1024));
+    m_unloadAnimationsWhenHiddenCheckBox->setChecked(m_appConfig.unloadAnimationsWhenHidden);
 
     m_requestContextMessageLimitSpinBox->setRange(0, 200);
     m_requestContextMessageLimitSpinBox->setValue(qBound(0, m_appConfig.requestContextMessageLimit, 200));
@@ -217,6 +226,9 @@ SettingsDialog::SettingsDialog(
     appFormLayout->addRow(QStringLiteral("性能模式"), m_performanceModeComboBox);
     appFormLayout->addRow(QString(), m_pauseWhenHiddenCheckBox);
     appFormLayout->addRow(QString(), m_enableLazyLoadCheckBox);
+    appFormLayout->addRow(QString(), m_enableAnimationPrewarmCheckBox);
+    appFormLayout->addRow(QStringLiteral("动画缓存上限"), m_animationCacheLimitSpinBox);
+    appFormLayout->addRow(QString(), m_unloadAnimationsWhenHiddenCheckBox);
 
     auto *appPageLayout = new QVBoxLayout();
     appPageLayout->setContentsMargins(24, 24, 24, 24);
@@ -332,7 +344,7 @@ SettingsDialog::SettingsDialog(
     contentLayout->addWidget(pageStack, 1);
 
     auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
-    connect(buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(buttonBox, &QDialogButtonBox::accepted, this, &SettingsDialog::accept);
     connect(buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
 
     auto *layout = new QVBoxLayout(this);
@@ -381,6 +393,13 @@ SettingsDialog::SettingsDialog(
     connect(m_testConnectionButton, &QPushButton::clicked, this, [this]() {
         testConnection();
     });
+    const auto updateAnimationCacheControls = [this](bool enabled) {
+        m_enableAnimationPrewarmCheckBox->setEnabled(enabled);
+        m_animationCacheLimitSpinBox->setEnabled(enabled);
+        m_unloadAnimationsWhenHiddenCheckBox->setEnabled(enabled);
+    };
+    updateAnimationCacheControls(m_enableLazyLoadCheckBox->isChecked());
+    connect(m_enableLazyLoadCheckBox, &QCheckBox::toggled, this, updateAnimationCacheControls);
     connect(m_saveConversationHistoryCheckBox, &QCheckBox::toggled, m_savedHistoryMessageLimitSpinBox, &QSpinBox::setEnabled);
     connect(m_clearConversationHistoryButton, &QPushButton::clicked, this, [this]() {
         this->clearConversationHistory();
@@ -397,13 +416,19 @@ SettingsDialog::~SettingsDialog()
 
 AIConfigStore SettingsDialog::aiConfigStore() const
 {
-    AIConfigStore store = m_configStore;
-    store.providers.remove(QStringLiteral("claude"));
-    store.providers.remove(QStringLiteral("calude"));
-    const QString provider = normalizedProviderName(m_providerComboBox->currentData().toString());
-    store.activeProvider = provider;
-    store.providers.insert(provider, configFromForm(provider));
-    return store;
+    if (m_hasAcceptedConfigStore)
+    {
+        return m_acceptedConfigStore;
+    }
+
+    AIConfigStore store;
+    QString errorMessage;
+    if (buildAIConfigStore(&store, &errorMessage))
+    {
+        return store;
+    }
+
+    return m_configStore;
 }
 
 AppConfig SettingsDialog::appConfig() const
@@ -417,11 +442,69 @@ AppConfig SettingsDialog::appConfig() const
     }
     config.pauseWhenHidden = m_pauseWhenHiddenCheckBox->isChecked();
     config.enableLazyLoad = m_enableLazyLoadCheckBox->isChecked();
+    config.enableAnimationPrewarm = m_enableAnimationPrewarmCheckBox->isChecked();
+    config.animationCacheLimitMb = m_animationCacheLimitSpinBox->value();
+    config.unloadAnimationsWhenHidden = m_unloadAnimationsWhenHiddenCheckBox->isChecked();
     config.requestContextMessageLimit = m_requestContextMessageLimitSpinBox->value();
     config.memoryHistoryMessageLimit = m_memoryHistoryMessageLimitSpinBox->value();
     config.saveConversationHistory = m_saveConversationHistoryCheckBox->isChecked();
     config.savedHistoryMessageLimit = m_savedHistoryMessageLimitSpinBox->value();
     return config;
+}
+
+void SettingsDialog::accept()
+{
+    if (!SecretStore::isEncryptionAvailable()
+        && !m_allowPlainApiKeyCheckBox->isChecked()
+        && !m_apiKeyEdit->text().isEmpty())
+    {
+        QMessageBox::information(
+            this,
+            QStringLiteral("API Key 未保存"),
+            QStringLiteral("当前平台不支持内置加密，且未允许明文保存。API Key 不会写入配置文件。"));
+    }
+
+    AIConfigStore store;
+    QString errorMessage;
+    if (!buildAIConfigStore(&store, &errorMessage))
+    {
+        QMessageBox::warning(this, QStringLiteral("设置未保存"), errorMessage);
+        setTestStatus(errorMessage, QStringLiteral("error"));
+        return;
+    }
+
+    m_acceptedConfigStore = store;
+    m_hasAcceptedConfigStore = true;
+    QDialog::accept();
+}
+
+bool SettingsDialog::buildAIConfigStore(AIConfigStore *store, QString *errorMessage) const
+{
+    if (store == nullptr)
+    {
+        return false;
+    }
+
+    AIConfigStore result = m_configStore;
+    result.providers.remove(QStringLiteral("claude"));
+    result.providers.remove(QStringLiteral("calude"));
+
+    const QString provider = normalizedProviderName(m_providerComboBox->currentData().toString());
+    QString configError;
+    const AIConfig currentConfig = configFromForm(provider, &configError);
+    if (!configError.isEmpty())
+    {
+        if (errorMessage != nullptr)
+        {
+            *errorMessage = configError;
+        }
+        return false;
+    }
+
+    result.activeProvider = provider;
+    result.providers.insert(provider, currentConfig);
+    *store = result;
+    return true;
 }
 
 void SettingsDialog::cacheCurrentProvider()
@@ -431,7 +514,15 @@ void SettingsDialog::cacheCurrentProvider()
         return;
     }
 
-    m_configStore.providers.insert(m_currentProvider, configFromForm(m_currentProvider));
+    QString errorMessage;
+    const AIConfig config = configFromForm(m_currentProvider, &errorMessage);
+    if (!errorMessage.isEmpty())
+    {
+        setTestStatus(errorMessage, QStringLiteral("error"));
+        return;
+    }
+
+    m_configStore.providers.insert(m_currentProvider, config);
 }
 
 void SettingsDialog::loadProviderConfig(const QString &provider)
@@ -469,10 +560,13 @@ void SettingsDialog::switchProvider(const QString &provider)
     m_currentProvider = normalizedProvider;
 }
 
-AIConfig SettingsDialog::configFromForm(const QString &provider) const
+AIConfig SettingsDialog::configFromForm(const QString &provider, QString *errorMessage) const
 {
     const QString normalizedProvider = normalizedProviderName(provider);
     AIConfig config = m_configStore.providers.value(normalizedProvider, defaultAIConfigForProvider(normalizedProvider));
+    const QString previousApiKeyStorage = config.apiKeyStorage;
+    const QString previousApiKeyEncrypted = config.apiKeyEncrypted;
+    const QString previousApiKey = config.apiKey;
     config.provider = normalizedProvider;
     config.protocol = defaultAIConfigForProvider(normalizedProvider).protocol;
     config.baseUrl = m_baseUrlEdit->text().trimmed();
@@ -501,7 +595,13 @@ AIConfig SettingsDialog::configFromForm(const QString &provider) const
         }
         else
         {
-            config.apiKeyStorage = QStringLiteral("none");
+            config.apiKeyStorage = previousApiKeyStorage;
+            config.apiKeyEncrypted = previousApiKeyEncrypted;
+            config.apiKey = previousApiKey;
+            if (errorMessage != nullptr)
+            {
+                *errorMessage = QStringLiteral("API Key 加密失败：") + result.errorMessage;
+            }
         }
     }
     else if (config.allowPlainApiKey)

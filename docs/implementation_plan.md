@@ -120,9 +120,10 @@ error ：20 帧
 
 ```text
 1. character.json 中 base.width/base.height 当前为 512x512
-2. 当前实现会预加载当前角色包的全部状态帧，后续需要观察内存和低配设备表现
+2. 当前实现已接入状态级懒加载：enableLazyLoad=true 时先保存帧路径，状态首次播放时再加载对应帧
 3. 如果项目公开发布或推送远程仓库，需要确认 shiroko 素材版权和再分发权限
 4. 版权不明确前，不应把它作为正式开源发布素材承诺
+5. 当前已接入主线程分批预热和状态级 LRU 卸载，并避免低缓存上限下的重复预热/卸载循环；尚未做后台线程预热、单帧级缓存和长期压测记录
 ```
 
 ---
@@ -285,7 +286,7 @@ error ：20 帧
 1. AnimationClip
 2. FrameAnimator
 3. 使用 QTimer 按 idle fps 播放帧
-4. 启动时预加载 idle 帧到内存
+4. 启动后播放 idle 时加载 idle 帧到内存
 5. loop=true 时循环播放
 6. 仍然只播放 idle 状态
 ```
@@ -371,7 +372,7 @@ error ：20 帧
 5. 保存窗口位置、置顶状态、缩放、性能模式
 6. Logger
 7. 基础日志轮转
-8. 配置损坏时备份为 .broken.json
+8. app config、AI config 和 conversation history 损坏时备份为带时间戳的 .broken 文件
 ```
 
 暂不做：
@@ -470,7 +471,7 @@ error ：20 帧
 4. Model 为空时有提示
 5. 错误 API Key 不崩溃
 6. 错误 URL 或超时不崩溃
-7. 日志不输出完整 API Key
+7. 日志不输出完整 API Key、Authorization Header、完整消息正文和完整错误响应正文
 8. 对话历史不会无限增长
 ```
 
@@ -494,6 +495,16 @@ error ：20 帧
 5. 优化 README 截图和说明
 6. 检查 DPI 和多屏表现
 7. 整理发布包
+```
+
+发布包排除：
+
+```text
+tools/
+docs/
+reports/
+build/
+.git/
 ```
 
 暂不做：
@@ -550,7 +561,9 @@ error ：20 帧
 
 7. 阶段 5 稳定性与性能检查：
    已做过一轮人工稳定性观察，包括静置、idle 动画、托盘隐藏/显示、重复状态切换和资源损坏兜底
-   当前尚未形成自动化性能测试或长期压测记录
+   已新增开发用性能采样脚本 tools/perf_sample.ps1
+   已新增稳定性检查记录模板 docs/performance_stability_check.md
+   当前尚未形成长期压测记录
 
 8. 阶段 6 AI 接入：
    已新增 LLMProvider / OpenAICompatibleProvider / GoogleGeminiProvider / ConversationManager
@@ -558,25 +571,30 @@ error ：20 帧
    已支持 Google Gemini generateContent / streamGenerateContent、x-goog-api-key、contents 多轮上下文和 systemInstruction
    已支持 SSE 流式输出，气泡中流式显示，历史面板只记录最终对话
    已限制同一时间只允许一个 AI 请求
-   已避免在日志中输出完整 API Key 和完整消息正文
+   已避免在日志中输出完整 API Key、Authorization Header、完整消息正文和完整错误响应正文
 
 9. 阶段 7 UI 基础优化：
    已新增 ChatBubble、ChatInputDialog、ChatHistoryPanel、SettingsDialog
    已支持右键聊天、显示对话、取消 AI 请求、清空对话、设置
    已删除临时 AI 测试入口和气泡测试入口
+   已将 AI 连通性测试迁移到设置页
    已支持 OpenAI / Google / DeepSeek / Custom 配置分 Provider 保存
    已移除废弃 Provider 配置入口，并在读取旧配置时清理废弃 Provider 配置
-   已支持应用设置页：缩放、性能模式、隐藏暂停、懒加载
-   已将 AppConfig 的 scale / performanceMode / pauseWhenHidden / enableLazyLoad 接入运行时
+   已支持内存历史上限和可选本地历史保存
+   已支持应用设置页：缩放、性能模式、隐藏暂停、懒加载、动画预热、动画缓存上限、隐藏时释放动画缓存
+   已将 AppConfig 的 scale / performanceMode / pauseWhenHidden / enableLazyLoad / enableAnimationPrewarm / animationCacheLimitMb / unloadAnimationsWhenHidden 接入运行时
+   懒加载当前为状态级首次播放加载，并已接入主线程分批预热和状态级 LRU 卸载；单轮预热不会反复重新加载刚被 LRU 卸载的状态
    Windows 下 API Key 使用 DPAPI 加密保存，非 Windows 需用户确认后才允许明文保存
+   运行时资源优先读取可执行文件同级 resources/，找不到时回退到源码目录 resources/
 ```
 
 当前实现与计划仍存在差异：
 
 ```text
 1. SettingsDialog 仍是最小设置界面，尚未包含完整角色切换流程和更完整的分区布局
-2. ConversationManager 请求上下文会截取最近 12 条历史，但内存中的 m_history 尚未做最大长度裁剪
-3. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
+2. 对话历史已有内存上限和可选本地保存，但尚未提供导出、搜索或完整管理界面
+3. 状态级懒加载尚未包含后台线程预热、单帧级缓存和长期压测记录
+4. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
 ```
 
 ---
@@ -596,9 +614,7 @@ error ：20 帧
    - 等待阶段拖动松开应回到 think
    - 收到首段回复后应进入 talk
    - 长文本流式输出期间应持续 talk
-3. 给 ConversationManager 增加内存历史上限，避免长期对话无限增长
-4. 把 AI 测试能力迁移到后续设置页，不再放在角色右键菜单
-5. 用户手测应用设置：
+3. 用户手测应用设置：
    - 缩放比例
    - 标准 / 低功耗性能模式
    - 隐藏到托盘时暂停动画
@@ -611,7 +627,8 @@ error ：20 帧
 1. 完善设置界面：
    - AI 配置和测试
    - 角色包导入和角色切换
-2. 补一轮可重复的稳定性与性能测试记录
+2. 使用 tools/perf_sample.ps1 补一轮可重复的稳定性与性能测试记录
+3. 使用 tools/perf_sample.ps1 验证状态级 LRU 卸载、主线程分批预热和动画缓存上限策略
 ```
 
 ---
@@ -622,6 +639,6 @@ error ：20 帧
 
 ```text
 1. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-2. 设置页下一步先做 AI 测试入口，还是先做角色包配置
-3. 是否需要把对话历史持久化保存，还是第一版只保留内存会话
+2. 设置页下一步先完善角色包配置，还是先补发布打包配置
+3. 对话历史后续是否需要导出、搜索或按角色/Provider 分组管理
 ```

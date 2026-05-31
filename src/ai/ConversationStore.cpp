@@ -2,6 +2,7 @@
 
 #include "../util/Logger.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -62,6 +63,40 @@ int overlappingMessageCount(const QVector<ChatMessage> &existingMessages, const 
     }
 
     return 0;
+}
+
+void backupBrokenConversationHistory(const QString &filePath)
+{
+    QFile file(filePath);
+    if (!file.exists())
+    {
+        return;
+    }
+
+    const QFileInfo fileInfo(filePath);
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    QString backupPath = fileInfo.dir().filePath(
+        fileInfo.completeBaseName() + QStringLiteral(".broken.") + timestamp + QStringLiteral(".json"));
+    int suffix = 1;
+    while (QFile::exists(backupPath))
+    {
+        backupPath = fileInfo.dir().filePath(
+            fileInfo.completeBaseName()
+            + QStringLiteral(".broken.")
+            + timestamp
+            + QStringLiteral("-")
+            + QString::number(suffix)
+            + QStringLiteral(".json"));
+        ++suffix;
+    }
+
+    if (file.rename(backupPath))
+    {
+        Logger::warning(QStringLiteral("Broken conversation history was backed up: %1").arg(backupPath));
+        return;
+    }
+
+    Logger::warning(QStringLiteral("Failed to back up broken conversation history: %1").arg(filePath));
 }
 }
 
@@ -170,6 +205,8 @@ QVector<ChatMessage> ConversationStore::readMessages(QString *errorMessage) cons
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
     {
+        file.close();
+        backupBrokenConversationHistory(m_filePath);
         if (errorMessage != nullptr)
         {
             *errorMessage = QStringLiteral("Conversation history is not valid JSON.");

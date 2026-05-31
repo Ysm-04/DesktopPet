@@ -7,6 +7,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QtGlobal>
 
 class AnimationClip
 {
@@ -14,7 +15,11 @@ public:
     static AnimationClip fromState(const CharacterState &state, const QSize &targetSize, bool loadFrames = true);
 
     bool isValid() const;
+    bool isLoaded() const;
     bool ensureLoaded();
+    void unloadFrames();
+    qint64 estimatedMemoryBytes() const;
+    int loadedFrameCount() const;
     const QPixmap &frameAt(int index) const;
     int frameCount() const;
 

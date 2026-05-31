@@ -2,6 +2,7 @@
 
 #include "../util/Logger.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -33,6 +34,9 @@ QJsonObject performanceObjectFromConfig(const AppConfig &config)
     performance.insert(QStringLiteral("mode"), config.performanceMode);
     performance.insert(QStringLiteral("pauseWhenHidden"), config.pauseWhenHidden);
     performance.insert(QStringLiteral("enableLazyLoad"), config.enableLazyLoad);
+    performance.insert(QStringLiteral("enableAnimationPrewarm"), config.enableAnimationPrewarm);
+    performance.insert(QStringLiteral("animationCacheLimitMb"), config.animationCacheLimitMb);
+    performance.insert(QStringLiteral("unloadAnimationsWhenHidden"), config.unloadAnimationsWhenHidden);
     return performance;
 }
 
@@ -164,7 +168,7 @@ AppConfig ConfigManager::loadAppConfig() const
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
     {
         file.close();
-        backupBrokenConfig(appConfigPath());
+        backupBrokenConfig(appConfigPath(), QStringLiteral("app config"));
         Logger::warning(QStringLiteral("App config is broken; default config will be used."));
         return config;
     }
@@ -203,6 +207,21 @@ AppConfig ConfigManager::loadAppConfig() const
     if (performance.contains(QStringLiteral("enableLazyLoad")))
     {
         config.enableLazyLoad = performance.value(QStringLiteral("enableLazyLoad")).toBool(config.enableLazyLoad);
+    }
+
+    if (performance.contains(QStringLiteral("enableAnimationPrewarm")))
+    {
+        config.enableAnimationPrewarm = performance.value(QStringLiteral("enableAnimationPrewarm")).toBool(config.enableAnimationPrewarm);
+    }
+
+    if (performance.contains(QStringLiteral("animationCacheLimitMb")))
+    {
+        config.animationCacheLimitMb = performance.value(QStringLiteral("animationCacheLimitMb")).toInt(config.animationCacheLimitMb);
+    }
+
+    if (performance.contains(QStringLiteral("unloadAnimationsWhenHidden")))
+    {
+        config.unloadAnimationsWhenHidden = performance.value(QStringLiteral("unloadAnimationsWhenHidden")).toBool(config.unloadAnimationsWhenHidden);
     }
 
     const QJsonObject chat = root.value(QStringLiteral("chat")).toObject();
@@ -250,7 +269,7 @@ AIConfigStore ConfigManager::loadAIConfigStore() const
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
     {
         file.close();
-        backupBrokenConfig(aiConfigPath());
+        backupBrokenConfig(aiConfigPath(), QStringLiteral("AI config"));
         Logger::warning(QStringLiteral("AI config is broken; default config will be used."));
         return store;
     }
@@ -387,7 +406,7 @@ QString ConfigManager::configDirectoryPath() const
     return QDir::currentPath();
 }
 
-void ConfigManager::backupBrokenConfig(const QString &filePath) const
+void ConfigManager::backupBrokenConfig(const QString &filePath, const QString &configName) const
 {
     QFile file(filePath);
     if (!file.exists())
@@ -396,12 +415,27 @@ void ConfigManager::backupBrokenConfig(const QString &filePath) const
     }
 
     const QFileInfo fileInfo(filePath);
-    const QString backupPath = fileInfo.dir().filePath(fileInfo.completeBaseName() + QStringLiteral(".broken.json"));
-    if (QFile::exists(backupPath))
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    QString backupPath = fileInfo.dir().filePath(
+        fileInfo.completeBaseName() + QStringLiteral(".broken.") + timestamp + QStringLiteral(".json"));
+    int suffix = 1;
+    while (QFile::exists(backupPath))
     {
-        QFile::remove(backupPath);
+        backupPath = fileInfo.dir().filePath(
+            fileInfo.completeBaseName()
+            + QStringLiteral(".broken.")
+            + timestamp
+            + QStringLiteral("-")
+            + QString::number(suffix)
+            + QStringLiteral(".json"));
+        ++suffix;
     }
 
-    file.rename(backupPath);
-    Logger::warning(QStringLiteral("Broken app config was backed up."));
+    if (file.rename(backupPath))
+    {
+        Logger::warning(QStringLiteral("Broken %1 was backed up: %2").arg(configName, backupPath));
+        return;
+    }
+
+    Logger::warning(QStringLiteral("Failed to back up broken %1: %2").arg(configName, filePath));
 }

@@ -1,5 +1,7 @@
 #include "CharacterPackageRepository.h"
 
+#include "../util/ResourcePaths.h"
+
 #include <QDir>
 #include <QFileInfo>
 
@@ -18,7 +20,7 @@ bool isValidCharacterId(const QString &characterId)
 
 QString CharacterPackageRepository::charactersRootPath()
 {
-    return QDir::cleanPath(QStringLiteral(PET_SOURCE_DIR) + QStringLiteral("/resources/characters"));
+    return ResourcePaths::charactersRootPath();
 }
 
 QString CharacterPackageRepository::defaultCharacterId()

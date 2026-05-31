@@ -10,6 +10,7 @@ class ChatBubble : public QWidget
 {
 public:
     explicit ChatBubble(QWidget *parent = nullptr);
+    ~ChatBubble() override;
 
     void showMessage(
         const QString &message,

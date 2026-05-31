@@ -1,5 +1,6 @@
 #include "GoogleGeminiProvider.h"
 
+#include "AIDiagnostics.h"
 #include "../util/Logger.h"
 
 #include <QJsonArray>
@@ -15,135 +16,6 @@
 
 namespace
 {
-constexpr int MaxDiagnosticBodyLength = 1000;
-
-QString trimmedResponseBody(const QByteArray &body)
-{
-    const QString text = QString::fromUtf8(body).trimmed();
-    if (text.size() <= MaxDiagnosticBodyLength)
-    {
-        return text;
-    }
-
-    return text.left(MaxDiagnosticBodyLength) + QStringLiteral("...");
-}
-
-QString oneLine(QString text)
-{
-    text.replace(QLatin1Char('\r'), QLatin1Char(' '));
-    text.replace(QLatin1Char('\n'), QLatin1Char(' '));
-    text.replace(QLatin1Char('\t'), QLatin1Char(' '));
-    return text.simplified();
-}
-
-bool isSensitiveQueryName(const QString &name)
-{
-    const QString lowerName = name.toLower();
-    return lowerName.contains(QStringLiteral("key"))
-        || lowerName.contains(QStringLiteral("token"))
-        || lowerName.contains(QStringLiteral("secret"))
-        || lowerName.contains(QStringLiteral("password"))
-        || lowerName.contains(QStringLiteral("authorization"))
-        || lowerName.contains(QStringLiteral("signature"));
-}
-
-QString sanitizedUrlString(QUrl url)
-{
-    url.setUserInfo(QString());
-
-    QUrlQuery query(url);
-    if (!query.isEmpty())
-    {
-        QUrlQuery sanitizedQuery;
-        const auto items = query.queryItems(QUrl::FullyDecoded);
-        for (const auto &item : items)
-        {
-            sanitizedQuery.addQueryItem(
-                item.first,
-                isSensitiveQueryName(item.first) ? QStringLiteral("<redacted>") : item.second);
-        }
-        url.setQuery(sanitizedQuery);
-    }
-
-    return url.toString(QUrl::FullyEncoded);
-}
-
-QString diagnosticContext(const AIConfig &config, const QUrl &url)
-{
-    return QStringLiteral("provider=%1 protocol=%2 model=%3 url=%4 timeoutMs=%5 maxTokens=%6 temperature=%7")
-        .arg(config.provider.trimmed().isEmpty() ? QStringLiteral("<empty>") : config.provider.trimmed())
-        .arg(config.protocol.trimmed().isEmpty() ? QStringLiteral("<empty>") : config.protocol.trimmed())
-        .arg(config.model.trimmed().isEmpty() ? QStringLiteral("<empty>") : config.model.trimmed())
-        .arg(sanitizedUrlString(url))
-        .arg(config.timeoutMs)
-        .arg(config.maxTokens)
-        .arg(QString::number(config.temperature, 'f', 2));
-}
-
-QString errorMessageFromBody(const QByteArray &body)
-{
-    if (body.trimmed().isEmpty())
-    {
-        return {};
-    }
-
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
-    {
-        return trimmedResponseBody(body);
-    }
-
-    const QJsonObject root = document.object();
-    QStringList details;
-
-    const QJsonValue errorValue = root.value(QStringLiteral("error"));
-    if (errorValue.isObject())
-    {
-        const QJsonObject error = errorValue.toObject();
-        const QString message = error.value(QStringLiteral("message")).toString().trimmed();
-        const QJsonValue codeValue = error.value(QStringLiteral("code"));
-        const QString code = codeValue.isString()
-            ? codeValue.toString().trimmed()
-            : (codeValue.isDouble() ? QString::number(codeValue.toInt()) : QString());
-        const QString status = error.value(QStringLiteral("status")).toString().trimmed();
-
-        if (!message.isEmpty())
-        {
-            details.append(message);
-        }
-        if (!code.isEmpty())
-        {
-            details.append(QStringLiteral("code=") + code);
-        }
-        if (!status.isEmpty() && status != code)
-        {
-            details.append(QStringLiteral("status=") + status);
-        }
-    }
-    else if (errorValue.isString())
-    {
-        const QString error = errorValue.toString().trimmed();
-        if (!error.isEmpty())
-        {
-            details.append(error);
-        }
-    }
-
-    const QString message = root.value(QStringLiteral("message")).toString().trimmed();
-    if (!message.isEmpty() && !details.contains(message))
-    {
-        details.append(message);
-    }
-
-    if (!details.isEmpty())
-    {
-        return details.join(QStringLiteral("; "));
-    }
-
-    return trimmedResponseBody(body);
-}
-
 QString normalizedGeminiModel(QString model)
 {
     model = model.trimmed();
@@ -331,7 +203,7 @@ void GoogleGeminiProvider::sendChatRequestInternal(
     const QJsonDocument document(buildPayload(request));
     const QByteArray payload = document.toJson(QJsonDocument::Compact);
     Logger::info(QStringLiteral("AI request started: %1 stream=%2 messageCount=%3 payloadBytes=%4")
-        .arg(diagnosticContext(m_config, url))
+        .arg(AIDiagnostics::diagnosticContext(m_config, url))
         .arg(stream ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(QString::number(request.messages.size()))
         .arg(QString::number(payload.size())));
@@ -403,7 +275,7 @@ void GoogleGeminiProvider::cancel()
     if (!reply.isNull())
     {
         Logger::info(QStringLiteral("AI request canceled: %1")
-            .arg(diagnosticContext(m_config, reply->request().url())));
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url())));
     }
     clearReply();
 
@@ -512,13 +384,13 @@ ChatResponse GoogleGeminiProvider::parseResponse(QNetworkReply *reply, const QBy
     const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     if (reply->error() != QNetworkReply::NoError)
     {
-        const QString bodyError = errorMessageFromBody(body);
-        Logger::warning(QStringLiteral("AI request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 body=\"%5\"")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
+        Logger::warning(QStringLiteral("AI request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 bodySummary=\"%5\"")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(static_cast<int>(reply->error()))
-            .arg(oneLine(reply->errorString()))
+            .arg(AIDiagnostics::oneLine(reply->errorString()))
             .arg(httpStatus)
-            .arg(oneLine(trimmedResponseBody(body))));
+            .arg(AIDiagnostics::responseBodySummary(body)));
 
         if (!bodyError.isEmpty())
         {
@@ -532,22 +404,22 @@ ChatResponse GoogleGeminiProvider::parseResponse(QNetworkReply *reply, const QBy
     const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
     {
-        Logger::warning(QStringLiteral("AI response JSON parse failed: %1 httpStatus=%2 parseError=\"%3\" body=\"%4\"")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        Logger::warning(QStringLiteral("AI response JSON parse failed: %1 httpStatus=%2 parseError=\"%3\" bodySummary=\"%4\"")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(httpStatus)
-            .arg(oneLine(parseError.errorString()))
-            .arg(oneLine(trimmedResponseBody(body))));
+            .arg(AIDiagnostics::oneLine(parseError.errorString()))
+            .arg(AIDiagnostics::responseBodySummary(body)));
         return {false, {}, QStringLiteral("AI response is not valid JSON."), httpStatus};
     }
 
     const QJsonObject root = document.object();
     if (root.contains(QStringLiteral("error")))
     {
-        const QString bodyError = errorMessageFromBody(body);
-        Logger::warning(QStringLiteral("AI response returned error: %1 httpStatus=%2 body=\"%3\"")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
+        Logger::warning(QStringLiteral("AI response returned error: %1 httpStatus=%2 bodySummary=\"%3\"")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(httpStatus)
-            .arg(oneLine(trimmedResponseBody(body))));
+            .arg(AIDiagnostics::responseBodySummary(body)));
         return {false, {}, bodyError.isEmpty() ? QStringLiteral("AI response returned an error.") : bodyError, httpStatus};
     }
 
@@ -555,16 +427,16 @@ ChatResponse GoogleGeminiProvider::parseResponse(QNetworkReply *reply, const QBy
     if (content.isEmpty())
     {
         const QString reason = geminiEmptyResponseReason(root);
-        Logger::warning(QStringLiteral("AI response content is empty: %1 httpStatus=%2 reason=\"%3\" body=\"%4\"")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        Logger::warning(QStringLiteral("AI response content is empty: %1 httpStatus=%2 reason=\"%3\" bodySummary=\"%4\"")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(httpStatus)
-            .arg(oneLine(reason))
-            .arg(oneLine(trimmedResponseBody(body))));
+            .arg(AIDiagnostics::safeTextSummary(reason))
+            .arg(AIDiagnostics::responseBodySummary(body)));
         return {false, {}, reason, httpStatus};
     }
 
     Logger::info(QStringLiteral("AI request completed: %1 httpStatus=%2 responseChars=%3 responseBytes=%4")
-        .arg(diagnosticContext(m_config, reply->request().url()))
+        .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
         .arg(httpStatus)
         .arg(QString::number(content.size()))
         .arg(QString::number(body.size())));
@@ -629,8 +501,8 @@ bool GoogleGeminiProvider::handleStreamPayload(const QByteArray &payload)
     if (parseError.error != QJsonParseError::NoError || !document.isObject())
     {
         Logger::warning(QStringLiteral("AI stream chunk JSON parse failed: %1 parseError=\"%2\" chunkBytes=%3")
-            .arg(diagnosticContext(m_config, requestUrl(true)))
-            .arg(oneLine(parseError.errorString()))
+            .arg(AIDiagnostics::diagnosticContext(m_config, requestUrl(true)))
+            .arg(AIDiagnostics::oneLine(parseError.errorString()))
             .arg(QString::number(payload.size())));
         return true;
     }
@@ -638,7 +510,7 @@ bool GoogleGeminiProvider::handleStreamPayload(const QByteArray &payload)
     const QJsonObject root = document.object();
     if (root.contains(QStringLiteral("error")))
     {
-        const QString bodyError = errorMessageFromBody(payload);
+        const QString bodyError = AIDiagnostics::errorMessageFromBody(payload);
         finishWithError(bodyError.isEmpty() ? QStringLiteral("AI stream returned an error.") : bodyError);
         return false;
     }
@@ -666,13 +538,13 @@ ChatResponse GoogleGeminiProvider::finishStreamingResponse(QNetworkReply *reply,
         : QByteArray();
     if (reply->error() != QNetworkReply::NoError)
     {
-        const QString bodyError = errorMessageFromBody(diagnosticBody);
-        Logger::warning(QStringLiteral("AI streaming request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 body=\"%5\" streamedChars=%6")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        const QString bodyError = AIDiagnostics::errorMessageFromBody(diagnosticBody);
+        Logger::warning(QStringLiteral("AI streaming request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 bodySummary=\"%5\" streamedChars=%6")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(static_cast<int>(reply->error()))
-            .arg(oneLine(reply->errorString()))
+            .arg(AIDiagnostics::oneLine(reply->errorString()))
             .arg(httpStatus)
-            .arg(oneLine(trimmedResponseBody(diagnosticBody)))
+            .arg(AIDiagnostics::responseBodySummary(diagnosticBody))
             .arg(QString::number(m_streamedContent.size())));
 
         if (!bodyError.isEmpty())
@@ -685,17 +557,17 @@ ChatResponse GoogleGeminiProvider::finishStreamingResponse(QNetworkReply *reply,
 
     if (m_streamedContent.isEmpty())
     {
-        Logger::warning(QStringLiteral("AI streaming response content is empty: %1 httpStatus=%2 streamDone=%3 residualBytes=%4 body=\"%5\"")
-            .arg(diagnosticContext(m_config, reply->request().url()))
+        Logger::warning(QStringLiteral("AI streaming response content is empty: %1 httpStatus=%2 streamDone=%3 residualBytes=%4 bodySummary=\"%5\"")
+            .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(httpStatus)
             .arg(m_streamDone ? QStringLiteral("true") : QStringLiteral("false"))
             .arg(QString::number(m_streamBuffer.size()))
-            .arg(oneLine(trimmedResponseBody(diagnosticBody))));
+            .arg(AIDiagnostics::responseBodySummary(diagnosticBody)));
         return {false, {}, QStringLiteral("Gemini streaming response content is empty."), httpStatus};
     }
 
     Logger::info(QStringLiteral("AI streaming request completed: %1 httpStatus=%2 streamDone=%3 responseChars=%4")
-        .arg(diagnosticContext(m_config, reply->request().url()))
+        .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
         .arg(httpStatus)
         .arg(m_streamDone ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(QString::number(m_streamedContent.size())));
@@ -708,9 +580,9 @@ void GoogleGeminiProvider::finishWithError(const QString &message, int httpStatu
     QPointer<QNetworkReply> reply = m_currentReply;
     const QUrl url = reply.isNull() ? requestUrl(m_streaming) : reply->request().url();
     Logger::warning(QStringLiteral("AI request finished with error: %1 httpStatus=%2 error=\"%3\"")
-        .arg(diagnosticContext(m_config, url))
+        .arg(AIDiagnostics::diagnosticContext(m_config, url))
         .arg(httpStatus)
-        .arg(oneLine(message)));
+        .arg(AIDiagnostics::safeTextSummary(message)));
 
     clearReply();
 

@@ -19,7 +19,9 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 文件日志和基础轮转
 - 设置窗口
 - 应用设置：缩放、性能模式、隐藏暂停、懒加载
+- 状态级动画预热和 LRU 缓存卸载
 - AI Provider 分组配置
+- 设置页内 AI 连通性测试
 - Windows DPAPI 加密保存 API Key
 - 非 Windows 环境经用户确认后明文保存 API Key
 - OpenAI Compatible 聊天请求
@@ -27,14 +29,15 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 聊天输入框
 - AI 回复气泡
 - 对话历史面板
+- 内存历史上限和可选本地历史保存
 - AI 请求取消和对话清空
 - Google Gemini 原生聊天请求
 
 尚未实现：
 
-- 设置页内 AI 连通性测试
 - 角色导入/切换界面
-- 对话历史持久化
+- 对话历史导出/管理界面
+- 长期性能压测记录
 - 打包发布脚本
 
 ## 技术栈
@@ -69,6 +72,18 @@ cmake --build build/mingw-debug
 
 如果使用 Qt Creator，也可以直接打开根目录 `CMakeLists.txt`，选择合适的 Qt Kit 后构建。
 
+## 应用图标
+
+当前应用图标位于：
+
+```text
+resources/icons/app_icon.ico
+resources/icons/app_icon_1024.png
+```
+
+`app_icon.ico` 用于窗口图标、托盘图标和 Windows exe 资源图标；托盘图标加载失败时会回退到默认角色包的 `preview.png`。`app_icon_1024.png` 作为高分辨率源图保留。
+运行时会优先读取可执行文件同级的 `resources/icons/`，找不到时回退到源码目录下的 `resources/icons/`。Windows exe 图标需要重新构建后生效。
+
 ## 角色包
 
 当前默认角色包位于：
@@ -92,7 +107,18 @@ resources/characters/shiroko/
   error/
 ```
 
-当前素材版本为 `2.1.0-stable`，所有帧使用 512x512 透明画布。当前实现会加载当前角色包的各状态帧并按 `character.json` 中的 FPS 播放。
+当前素材版本为 `2.1.0-stable`，所有帧使用 512x512 透明画布。当前实现会读取当前角色包的各状态配置，并按 `character.json` 中的 FPS 播放。
+运行时会优先读取可执行文件同级的 `resources/characters/`，找不到时回退到源码目录下的 `resources/characters/`。
+
+懒加载现状：
+
+- `enableLazyLoad=true` 时，启动阶段只建立状态到帧路径的索引
+- 某个状态首次播放时加载该状态的 PNG 帧
+- 启动后会在主线程按批次预热常用状态，避免一次性加载全部帧
+- 已加载状态按状态级 LRU 策略管理，超过动画缓存上限时卸载非保护状态
+- 单轮预热不会反复重新加载刚被 LRU 卸载的状态，避免缓存上限较低时出现加载/卸载循环
+- 隐藏到托盘时可释放非保护动画缓存
+- `enableLazyLoad=false` 时仍保持启动阶段加载全部状态帧的兼容行为
 
 ## 配置和日志
 
@@ -102,10 +128,12 @@ resources/characters/shiroko/
 QStandardPaths::AppConfigLocation/app_config.json
 ```
 
-配置损坏时会备份为：
+配置损坏时会备份为带时间戳的文件：
 
 ```text
-app_config.broken.json
+app_config.broken.yyyyMMdd-HHmmss.json
+ai_config.broken.yyyyMMdd-HHmmss.json
+conversation_history.broken.yyyyMMdd-HHmmss.json
 ```
 
 日志输出到文件，不输出到控制台：
@@ -121,6 +149,28 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 - 单个日志文件超过 2MB 时轮转
 - 最多保留 3 个旧日志文件
 - 文件名为 `QtDesktopPet.log.1`、`QtDesktopPet.log.2`、`QtDesktopPet.log.3`
+
+## 开发诊断
+
+仓库提供开发用性能采样脚本，不进入普通用户发布包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/perf_sample.ps1
+```
+
+默认采样当前 `QtDesktopPet` 进程 5 分钟，每 5 秒一条，CSV 输出到：
+
+```text
+reports/perf/
+```
+
+`reports/perf/` 已加入 `.gitignore`。稳定性检查记录模板见：
+
+```text
+docs/performance_stability_check.md
+```
+
+发布包应排除 `tools/`、`docs/`、`reports/`、`build/` 和 `.git/`，只保留运行必需文件、`resources/characters/`、`resources/icons/`、`LICENSE` 和必要说明。
 
 ## AI 配置和聊天
 
@@ -148,15 +198,15 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 - API Key 不写入日志，不在错误提示中完整显示
 - 对话历史面板记录用户消息和 AI 最终回复
 
-AI 测试入口已从角色右键菜单移除，后续会放入设置页。
+AI 测试入口已从角色右键菜单移除，并迁移到设置页。
 
 ## 隐私说明
 
 程序只会把用户消息发送到用户自己配置的接口。用户需要自行判断第三方代理、中转服务或自建服务是否可信。项目不会默认承诺第三方接口的隐私安全。
 
-日志会记录请求诊断信息，例如 Provider、Base URL 主机、Path、HTTP 状态码、响应大小、错误摘要等；日志不应记录完整 API Key、Authorization Header 或完整消息正文。
+日志会记录请求诊断信息，例如 Provider、Base URL 主机、Path、HTTP 状态码、响应大小、错误摘要等；日志不应记录完整 API Key、Authorization Header、完整消息正文或完整错误响应正文。错误响应只保留脱敏摘要。
 
-当前对话历史保存在内存中，请求上下文只截取最近部分历史。后续仍需要补充内存历史上限和可选持久化策略。
+当前对话历史默认保存在内存中，已支持内存历史上限、请求上下文截取和可选本地历史保存；相关上限可在设置页调整。
 
 ## 素材版权说明
 

@@ -488,8 +488,9 @@ AI 回复完成            → idle
 配置文件损坏时，不要直接覆盖，先备份为：
 
 ```text
-app_config.broken.json
-ai_config.broken.json
+app_config.broken.yyyyMMdd-HHmmss.json
+ai_config.broken.yyyyMMdd-HHmmss.json
+conversation_history.broken.yyyyMMdd-HHmmss.json
 ```
 
 然后再生成默认配置。
@@ -1682,8 +1683,8 @@ MIT License 开源
 当前仍需补齐：
 
 ```text
-1. 设置页内 AI 连通性测试
-2. 对话历史内存上限和可选持久化
-3. 角色包导入和角色切换
-4. 发布前素材授权确认与打包验证
+1. 角色包导入和角色切换
+2. 对话历史导出、搜索或更完整管理界面
+3. 发布前素材授权确认与打包验证
+4. 长期性能压测记录
 ```

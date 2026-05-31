@@ -14,6 +14,8 @@ find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 qt_add_executable(QtDesktopPet
     main.cpp
+    src/ai/AIDiagnostics.h
+    src/ai/AIDiagnostics.cpp
     src/ai/AIProviderFactory.h
     src/ai/AIProviderFactory.cpp
     src/ai/ConversationManager.h
@@ -61,6 +63,8 @@ qt_add_executable(QtDesktopPet
     src/ui/PetWindow.cpp
     src/util/Logger.h
     src/util/Logger.cpp
+    src/util/ResourcePaths.h
+    src/util/ResourcePaths.cpp
 )
 
 target_compile_definitions(QtDesktopPet
@@ -75,6 +79,11 @@ target_link_libraries(QtDesktopPet
 )
 
 if (WIN32)
+    set_source_files_properties(resources/icons/app_icon.rc
+        PROPERTIES
+            INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons"
+    )
+    target_sources(QtDesktopPet PRIVATE resources/icons/app_icon.rc)
     target_compile_definitions(QtDesktopPet PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
     target_link_libraries(QtDesktopPet PRIVATE Crypt32)
 endif()
