@@ -37,6 +37,7 @@ public:
     void applyAppConfig(const AppConfig &config);
     AppConfig currentAppConfig() const;
     void openSettingsDialog();
+    void activateFromExternalInstance();
     void setSettingsFallbackInContextMenuEnabled(bool enabled);
     void pauseAnimation();
     void resumeAnimation();

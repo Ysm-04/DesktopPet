@@ -14,6 +14,7 @@
 #include "SettingsDialog.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDialog>
@@ -87,6 +88,46 @@ AppConfig normalizedAppConfig(AppConfig config)
         config.characterId = CharacterPackageRepository::defaultCharacterId();
     }
     return config;
+}
+
+QScreen *screenForPopup(const QWidget *reference)
+{
+    if (reference != nullptr)
+    {
+        if (QScreen *screen = QGuiApplication::screenAt(reference->frameGeometry().center()))
+        {
+            return screen;
+        }
+    }
+
+    if (QScreen *screen = QGuiApplication::screenAt(QCursor::pos()))
+    {
+        return screen;
+    }
+
+    return QGuiApplication::primaryScreen();
+}
+
+void centerDialogOnScreen(QDialog *dialog, const QWidget *reference)
+{
+    if (dialog == nullptr)
+    {
+        return;
+    }
+
+    QScreen *screen = screenForPopup(reference);
+    if (screen == nullptr)
+    {
+        return;
+    }
+
+    const QRect availableGeometry = screen->availableGeometry();
+    const QSize dialogSize = dialog->size().isValid()
+        ? dialog->size()
+        : dialog->sizeHint();
+    const int x = availableGeometry.left() + qMax(0, (availableGeometry.width() - dialogSize.width()) / 2);
+    const int y = availableGeometry.top() + qMax(0, (availableGeometry.height() - dialogSize.height()) / 2);
+    dialog->move(QPoint(x, y));
 }
 
 QString userVisibleErrorMessage(const ChatResponse &response)
@@ -284,6 +325,7 @@ void PetWindow::openSettingsDialog()
     }, [this]() {
         clearConversation();
     }, this);
+    centerDialogOnScreen(&dialog, this);
     if (dialog.exec() != QDialog::Accepted)
     {
         return;
@@ -299,6 +341,31 @@ void PetWindow::openSettingsDialog()
     {
         Logger::warning(QStringLiteral("Failed to save app config from settings dialog."));
     }
+}
+
+void PetWindow::activateFromExternalInstance()
+{
+    if (!isVisible())
+    {
+        show();
+        resumeAnimation();
+    }
+
+    if (isMinimized())
+    {
+        setWindowState(windowState() & ~Qt::WindowMinimized);
+    }
+
+    if (QWidget *modalWidget = QApplication::activeModalWidget())
+    {
+        modalWidget->raise();
+        modalWidget->activateWindow();
+        return;
+    }
+
+    raise();
+    activateWindow();
+    updateBubblePosition();
 }
 
 void PetWindow::setSettingsFallbackInContextMenuEnabled(bool enabled)
