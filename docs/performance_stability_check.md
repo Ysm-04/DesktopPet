@@ -47,6 +47,8 @@ reports/perf/
 | idle 连续播放 | 保持桌宠可见并播放 idle 10 分钟 | `tools/perf_sample.ps1 -DurationSeconds 600` | 动画持续播放，内存曲线稳定 | TODO | TODO | TODO |
 | 隐藏到托盘 | 可见采样 3 分钟，隐藏后再采样 3 分钟 | 两次采样分别记录 | 隐藏后 CPU 下降或保持低占用 | TODO | TODO | TODO |
 | 重复显示 / 隐藏 | 连续显示/隐藏 10 次 | `tools/perf_sample.ps1 -DurationSeconds 300` | 无崩溃，句柄数和内存无异常增长 | TODO | TODO | TODO |
+| 重复启动 / 单实例 | 已运行时连续双击 exe 多次；隐藏到托盘后再双击 exe | 任务管理器或 `Get-Process QtDesktopPet` | 始终只有一个进程；隐藏状态可被重复启动唤醒 | TODO | TODO | 检查 QLocalServer 激活路径 |
+| 设置页居中 / 置前 | 从托盘打开设置页；多屏环境重复打开；设置页已打开时再次启动 exe | 手工观察 | 设置页位于当前屏幕可用区域中心；重复启动时设置页置前 | TODO | TODO | 优先按宠物所在屏幕计算 |
 | 重复切换状态 | 通过右键状态测试切换 `idle/think/talk/error/drag` | `tools/perf_sample.ps1 -DurationSeconds 300` | 首次切换状态允许加载资源，缓存达到上限后按 LRU 卸载非保护状态 | TODO | TODO | 结合日志确认加载/卸载记录 |
 | 动画预热与卸载 | 默认配置启动后静置，随后隐藏到托盘再显示 | `tools/perf_sample.ps1 -DurationSeconds 600` | 日志出现有限次分批预热；隐藏后非保护动画缓存释放；显示后不会反复预热刚被卸载的状态 | TODO | TODO | 不应影响当前播放状态恢复 |
 | 缩放 / 置顶切换 | 设置页切换缩放，右键切换置顶 | `tools/perf_sample.ps1 -DurationSeconds 300` | 窗口尺寸和状态稳定，无崩溃 | TODO | TODO | TODO |
@@ -86,6 +88,7 @@ docs/
 reports/
 build/
 dist/
+release_packages/
 .git/
 ```
 
@@ -109,6 +112,8 @@ README.md
 ```
 
 安装器最终文件默认放在项目根目录。Inno Setup 编译阶段使用当前盘符下的纯 ASCII 临时目录，例如 `D:\QtDesktopPetInstallerOutput`，再复制最终安装包回项目根目录，用于规避中文项目路径下可能出现的 `EndUpdateResource failed (5)`。
+
+如果需要把本地安装包集中保存，可通过 `-InstallerOutputDir release_packages` 输出到 `release_packages/`。该目录属于本地发布产物，不进入 Git。
 
 运行时资源查找顺序：
 

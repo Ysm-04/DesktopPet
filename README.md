@@ -1,6 +1,6 @@
 # QtDesktopPet
 
-QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型项目。当前目标是完成一个轻量桌宠内核，并在此基础上接入用户自定义的大模型对话能力。
+QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物项目，当前已具备多状态 PNG 帧动画、托盘控制、角色包导入与切换、用户自定义大模型对话、设置面板和 Windows 发布打包能力。项目现阶段重点是完善稳定性、性能回归、角色管理和发布体验。
 
 ## 当前状态
 
@@ -14,10 +14,11 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - PNG 序列帧动画播放
 - `idle` / `talk` / `think` / `sleep` / `happy` / `drag` / `error` 状态
 - 托盘显示、隐藏、退出
+- 单实例限制，重复启动会唤醒已有实例
 - 隐藏时暂停动画，显示时恢复动画
 - 保存窗口位置、置顶、缩放和性能设置
 - 文件日志和基础轮转
-- 设置窗口
+- 设置窗口按当前屏幕居中弹出
 - 应用设置：缩放、性能模式、隐藏暂停、懒加载
 - 状态级动画预热和 LRU 缓存卸载
 - AI Provider 分组配置
@@ -35,6 +36,7 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 角色文件夹导入和角色切换
 - 删除用户导入角色
 - Windows 发布打包脚本和 Inno Setup 安装器脚本
+- Windows GUI 子系统，Release exe 双击不弹控制台窗口
 
 尚未实现：
 
@@ -47,6 +49,7 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 
 - C++17
 - Qt 6 Widgets
+- Qt 6 Network
 - CMake
 - PNG 图片序列帧
 - JSON 配置文件
@@ -231,6 +234,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
 
 如果需要改变 Inno Setup 的临时编译输出目录，可传入 `-InstallerWorkOutputDir`。
 
+本地生成的安装包也可以集中放到 `release_packages/`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
+  -ExePath build/release/QtDesktopPet.exe `
+  -BuildInstaller `
+  -InstallerOutputDir release_packages
+```
+
+`dist/` 和 `release_packages/` 都是本地发布产物目录，不进入 Git。
+
 脚本默认优先查找：
 
 ```text
@@ -264,7 +278,7 @@ reports/perf/
 docs/performance_stability_check.md
 ```
 
-发布包应排除 `tools/`、`docs/`、`reports/`、`build/`、`dist/` 和 `.git/`，只保留运行必需文件、`resources/characters/`、`resources/icons/`、`LICENSE` 和必要说明。
+发布包应排除 `tools/`、`docs/`、`reports/`、`build/`、`dist/`、`release_packages/` 和 `.git/`，只保留运行必需文件、`resources/characters/`、`resources/icons/`、`LICENSE` 和必要说明。
 
 ## AI 配置和聊天
 
