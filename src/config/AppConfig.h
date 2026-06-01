@@ -15,6 +15,7 @@ struct AppConfig
     bool enableAnimationPrewarm = true;
     int animationCacheLimitMb = 180;
     bool unloadAnimationsWhenHidden = true;
+    QString characterId = QStringLiteral("shiroko");
     int requestContextMessageLimit = 12;
     int memoryHistoryMessageLimit = 200;
     bool saveConversationHistory = false;

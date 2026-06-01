@@ -122,6 +122,10 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
     }
 
     package.id = requiredString(root, QStringLiteral("id"));
+    if (package.id.isEmpty())
+    {
+        package.id = QFileInfo(package.packagePath).fileName().trimmed();
+    }
     package.displayName = requiredString(root, QStringLiteral("displayName"));
     package.author = requiredString(root, QStringLiteral("author"));
     package.version = requiredString(root, QStringLiteral("version"));

@@ -9,6 +9,7 @@
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -20,6 +21,7 @@
 #include <QPair>
 #include <QPointer>
 #include <QPushButton>
+#include <QDir>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStyle>
@@ -90,6 +92,9 @@ SettingsDialog::SettingsDialog(
     , m_savedHistoryMessageLimitSpinBox(new QSpinBox(this))
     , m_clearConversationHistoryButton(new QPushButton(QStringLiteral("清空聊天记录"), this))
     , m_characterComboBox(new QComboBox(this))
+    , m_importCharacterButton(new QPushButton(QStringLiteral("导入角色文件夹"), this))
+    , m_deleteCharacterButton(new QPushButton(QStringLiteral("删除角色"), this))
+    , m_characterStatusLabel(new QLabel(this))
     , m_configStore(configStore)
     , m_appConfig(appConfig)
     , m_aiTestBlocked(std::move(aiTestBlocked))
@@ -273,29 +278,13 @@ SettingsDialog::SettingsDialog(
     auto *chatPage = new QWidget(this);
     chatPage->setLayout(chatPageLayout);
 
-    QStringList characterIds = CharacterPackageRepository::availablePackageIds();
-    if (characterIds.isEmpty())
-    {
-        characterIds.append(CharacterPackageRepository::defaultCharacterId());
-    }
-
-    for (const QString &characterId : characterIds)
-    {
-        m_characterComboBox->addItem(characterId, characterId);
-    }
-
-    const int defaultCharacterIndex = m_characterComboBox->findData(CharacterPackageRepository::defaultCharacterId());
-    if (defaultCharacterIndex >= 0)
-    {
-        m_characterComboBox->setCurrentIndex(defaultCharacterIndex);
-    }
-
-    m_characterComboBox->setEnabled(false);
-    m_characterComboBox->setToolTip(QStringLiteral("角色选择将在多角色资源配置接入后启用。"));
+    m_characterStatusLabel->setObjectName(QStringLiteral("HintLabel"));
+    m_characterStatusLabel->setWordWrap(true);
+    reloadCharacterList(m_appConfig.characterId);
 
     auto *characterTitleLabel = new QLabel(QStringLiteral("角色"), this);
     characterTitleLabel->setObjectName(QStringLiteral("PageTitle"));
-    auto *characterHintLabel = new QLabel(QStringLiteral("当前版本使用内置角色资源。"), this);
+    auto *characterHintLabel = new QLabel(QStringLiteral("支持导入本地角色文件夹。导入前会先验证角色包，验证失败不会复制或覆盖任何文件。"), this);
     characterHintLabel->setObjectName(QStringLiteral("HintLabel"));
     characterHintLabel->setWordWrap(true);
 
@@ -306,11 +295,17 @@ SettingsDialog::SettingsDialog(
     characterFormLayout->setVerticalSpacing(12);
     characterFormLayout->addRow(QStringLiteral("当前角色"), m_characterComboBox);
 
+    auto *characterActionLayout = new QHBoxLayout();
+    characterActionLayout->addWidget(m_importCharacterButton);
+    characterActionLayout->addWidget(m_deleteCharacterButton);
+    characterActionLayout->addWidget(m_characterStatusLabel, 1);
+
     auto *characterPageLayout = new QVBoxLayout();
     characterPageLayout->setContentsMargins(24, 24, 24, 24);
     characterPageLayout->setSpacing(16);
     characterPageLayout->addWidget(characterTitleLabel);
     characterPageLayout->addLayout(characterFormLayout);
+    characterPageLayout->addLayout(characterActionLayout);
     characterPageLayout->addWidget(characterHintLabel);
     characterPageLayout->addStretch();
 
@@ -404,6 +399,12 @@ SettingsDialog::SettingsDialog(
     connect(m_clearConversationHistoryButton, &QPushButton::clicked, this, [this]() {
         this->clearConversationHistory();
     });
+    connect(m_importCharacterButton, &QPushButton::clicked, this, [this]() {
+        importCharacterFolder();
+    });
+    connect(m_deleteCharacterButton, &QPushButton::clicked, this, [this]() {
+        deleteSelectedCharacter();
+    });
 }
 
 SettingsDialog::~SettingsDialog()
@@ -449,6 +450,11 @@ AppConfig SettingsDialog::appConfig() const
     config.memoryHistoryMessageLimit = m_memoryHistoryMessageLimitSpinBox->value();
     config.saveConversationHistory = m_saveConversationHistoryCheckBox->isChecked();
     config.savedHistoryMessageLimit = m_savedHistoryMessageLimitSpinBox->value();
+    config.characterId = m_characterComboBox->currentData().toString().trimmed();
+    if (config.characterId.isEmpty())
+    {
+        config.characterId = CharacterPackageRepository::defaultCharacterId();
+    }
     return config;
 }
 
@@ -754,4 +760,173 @@ void SettingsDialog::clearConversationHistory()
     }
 
     m_clearConversationStatusLabel->setText(QStringLiteral("聊天记录已清空。"));
+}
+
+void SettingsDialog::reloadCharacterList(const QString &selectedCharacterId)
+{
+    const QString currentSelection = selectedCharacterId.trimmed().isEmpty()
+        ? m_characterComboBox->currentData().toString()
+        : selectedCharacterId.trimmed();
+
+    m_characterComboBox->clear();
+    const QVector<CharacterPackageInfo> packages = CharacterPackageRepository::availablePackages();
+    for (const CharacterPackageInfo &package : packages)
+    {
+        QString label = package.displayName.trimmed().isEmpty() ? package.id : package.displayName.trimmed();
+        if (label != package.id)
+        {
+            label += QStringLiteral(" (") + package.id + QStringLiteral(")");
+        }
+        label += package.userPackage ? QStringLiteral(" - 用户") : QStringLiteral(" - 内置");
+        m_characterComboBox->addItem(label, package.id);
+    }
+
+    if (m_characterComboBox->count() == 0)
+    {
+        m_characterComboBox->addItem(CharacterPackageRepository::defaultCharacterId(), CharacterPackageRepository::defaultCharacterId());
+    }
+
+    int selectedIndex = m_characterComboBox->findData(currentSelection);
+    if (selectedIndex < 0)
+    {
+        selectedIndex = m_characterComboBox->findData(CharacterPackageRepository::defaultCharacterId());
+    }
+    m_characterComboBox->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
+}
+
+void SettingsDialog::deleteSelectedCharacter()
+{
+    const QString characterId = m_characterComboBox->currentData().toString().trimmed();
+    if (characterId.isEmpty())
+    {
+        return;
+    }
+
+    if (CharacterPackageRepository::hasBuiltInPackage(characterId))
+    {
+        QMessageBox::information(
+            this,
+            QStringLiteral("不能删除内置角色"),
+            QStringLiteral("当前选择的是内置角色，不能删除。"));
+        return;
+    }
+
+    if (!CharacterPackageRepository::hasUserPackage(characterId))
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("删除角色失败"),
+            QStringLiteral("没有找到可删除的用户角色目录。"));
+        return;
+    }
+
+    const QMessageBox::StandardButton result = QMessageBox::warning(
+        this,
+        QStringLiteral("删除角色"),
+        QStringLiteral("确定要删除用户角色 \"%1\" 吗？\n\n这会删除该角色的用户角色目录，操作不可恢复。").arg(characterId),
+        QMessageBox::Yes | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (result != QMessageBox::Yes)
+    {
+        return;
+    }
+
+    QString errorMessage;
+    if (!CharacterPackageRepository::deleteUserPackage(characterId, &errorMessage))
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("删除角色失败"),
+            errorMessage.isEmpty() ? QStringLiteral("删除用户角色目录失败。") : errorMessage);
+        return;
+    }
+
+    if (m_appConfig.characterId == characterId)
+    {
+        m_appConfig.characterId = CharacterPackageRepository::defaultCharacterId();
+    }
+
+    reloadCharacterList(CharacterPackageRepository::defaultCharacterId());
+    m_characterStatusLabel->setText(QStringLiteral("已删除角色：%1").arg(characterId));
+}
+
+void SettingsDialog::importCharacterFolder()
+{
+    const QString directoryPath = QFileDialog::getExistingDirectory(
+        this,
+        QStringLiteral("选择角色文件夹"),
+        QString(),
+        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
+    if (directoryPath.isEmpty())
+    {
+        return;
+    }
+
+    CharacterPackageValidationResult validation = CharacterPackageRepository::validatePackageDirectoryWithDetails(directoryPath);
+    if (!validation.valid)
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("角色导入失败"),
+            QStringLiteral("角色包验证未通过：\n") + validation.errorMessage);
+        return;
+    }
+
+    const QString characterId = validation.characterId;
+    const QString displayName = validation.displayName;
+    if (CharacterPackageRepository::hasBuiltInPackage(characterId))
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("角色导入失败"),
+            QStringLiteral("角色 id 与内置角色重复，不能覆盖内置角色。\n请修改角色包 id 或文件夹名后再导入。"));
+        return;
+    }
+
+    bool overwrite = false;
+    const bool sourceIsExistingUserPackage =
+        QDir::cleanPath(directoryPath) == QDir::cleanPath(CharacterPackageRepository::userPackagePath(characterId));
+    if (CharacterPackageRepository::hasUserPackage(characterId) && !sourceIsExistingUserPackage)
+    {
+        const QMessageBox::StandardButton result = QMessageBox::question(
+            this,
+            QStringLiteral("覆盖已有角色"),
+            QStringLiteral("已存在同名用户角色：%1\n是否覆盖？").arg(characterId),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (result != QMessageBox::Yes)
+        {
+            return;
+        }
+
+        overwrite = true;
+    }
+
+    if (!validation.warningMessage.isEmpty())
+    {
+        const QMessageBox::StandardButton result = QMessageBox::warning(
+            this,
+            QStringLiteral("角色导入提示"),
+            validation.warningMessage + QStringLiteral("\n\n仍然继续导入吗？"),
+            QMessageBox::Yes | QMessageBox::Cancel,
+            QMessageBox::Cancel);
+        if (result != QMessageBox::Yes)
+        {
+            return;
+        }
+    }
+
+    QString errorMessage;
+    QString importedCharacterId;
+    if (!CharacterPackageRepository::importPackageDirectory(directoryPath, overwrite, &importedCharacterId, &errorMessage))
+    {
+        QMessageBox::warning(
+            this,
+            QStringLiteral("角色导入失败"),
+            errorMessage.isEmpty() ? QStringLiteral("复制角色文件夹失败。") : errorMessage);
+        return;
+    }
+
+    reloadCharacterList(importedCharacterId);
+    m_characterStatusLabel->setText(QStringLiteral("已导入角色：%1").arg(displayName.isEmpty() ? importedCharacterId : displayName));
 }

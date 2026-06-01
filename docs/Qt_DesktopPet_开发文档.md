@@ -1394,16 +1394,29 @@ Windows 下不能只拷贝 exe。
 8. 便携模式是否可用
 ```
 
-建议后续提供：
+当前提供：
 
 ```text
 1. Windows x64 Release 构建
 2. 打包脚本
 3. README 部署说明
-4. 示例角色包
+4. Inno Setup 安装器脚本
 ```
 
-第一版可以先不做安装器，但需要保证构建产物可以在普通 Windows 环境运行。
+发布流程：
+
+```text
+1. 用户手动完成 Release 构建
+2. 运行 tools/package_release.ps1，传入 QtDesktopPet.exe 路径
+3. 脚本调用 windeployqt 收集 Qt 运行库
+4. 脚本复制 resources/characters、resources/icons、LICENSE、README.md
+5. 脚本生成 dist/QtDesktopPet-<version>-windows-x64.zip
+6. 需要安装器时，脚本优先查找 D:\Inno Setup 7\ISCC.exe，并调用 ISCC 编译 installer/QtDesktopPet.iss
+7. 安装器默认最终输出到项目根目录
+8. Inno 编译阶段使用当前盘符下的纯 ASCII 临时目录，例如 D:\QtDesktopPetInstallerOutput，避免中文项目路径下出现 EndUpdateResource failed (5)
+```
+
+安装器卸载时需要询问用户是否删除用户数据。用户确认后，在卸载完成阶段删除当前用户的 QtDesktopPet 配置、导入角色、聊天记录和日志。
 
 ---
 
@@ -1683,7 +1696,7 @@ MIT License 开源
 当前仍需补齐：
 
 ```text
-1. 角色包导入和角色切换
+1. 角色包导出和更完整管理界面
 2. 对话历史导出、搜索或更完整管理界面
 3. 发布前素材授权确认与打包验证
 4. 长期性能压测记录

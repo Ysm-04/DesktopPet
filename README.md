@@ -32,13 +32,16 @@ QtDesktopPet 是一个基于 Qt Widgets / C++17 的 Windows 桌面宠物原型�
 - 内存历史上限和可选本地历史保存
 - AI 请求取消和对话清空
 - Google Gemini 原生聊天请求
+- 角色文件夹导入和角色切换
+- 删除用户导入角色
+- Windows 发布打包脚本和 Inno Setup 安装器脚本
 
 尚未实现：
 
-- 角色导入/切换界面
+- 角色导出和更完整的管理界面
 - 对话历史导出/管理界面
 - 长期性能压测记录
-- 打包发布脚本
+- 发布包实机安装/卸载验证
 
 ## 技术栈
 
@@ -92,7 +95,13 @@ resources/icons/app_icon_1024.png
 resources/characters/shiroko/
 ```
 
-角色包按 `resources/characters/<characterId>/` 组织，后续新增角色包时放在同级子目录。基本结构：
+内置角色包按 `resources/characters/<characterId>/` 组织。用户导入的角色包不会写入安装目录，而是复制到用户数据目录：
+
+```text
+QStandardPaths::AppDataLocation/characters/<characterId>/
+```
+
+角色包基本结构：
 
 ```text
 resources/characters/shiroko/
@@ -108,7 +117,20 @@ resources/characters/shiroko/
 ```
 
 当前素材版本为 `2.1.0-stable`，所有帧使用 512x512 透明画布。当前实现会读取当前角色包的各状态配置，并按 `character.json` 中的 FPS 播放。
-运行时会优先读取可执行文件同级的 `resources/characters/`，找不到时回退到源码目录下的 `resources/characters/`。
+运行时会合并内置角色和用户导入角色；内置资源优先读取可执行文件同级的 `resources/characters/`，找不到时回退到源码目录下的 `resources/characters/`。
+
+角色导入：
+
+- 只支持导入本地文件夹，不支持 zip
+- 导入前先验证源文件夹；验证失败只弹窗提示，不复制、不创建、不覆盖文件
+- 验证通过后复制到用户数据目录
+- 角色 id 优先读取 `character.json` 的 `id`；为空时使用文件夹名
+- 角色 id 只允许 ASCII 字母、数字、点、下划线和短横线，且不能以点开头或结尾
+- 用户角色同名时会询问是否覆盖
+- 内置角色 id 不能被导入包覆盖
+- 验证要求：`character.json` 可解析、id 安全、存在 `idle` 和 `defaultState`、状态路径安全、fps 合法、每个声明状态至少有一张可读 PNG
+- 如果 `base.anchorY + bubble.offsetY` 计算出的气泡锚点明显偏低，导入时会提示用户检查配置，但不强制阻止导入
+- 只允许删除用户导入角色；选择内置角色删除时只会提示“不能删除内置角色”，不做文件操作
 
 懒加载现状：
 
@@ -150,6 +172,78 @@ QStandardPaths::AppConfigLocation/logs/QtDesktopPet.log
 - 最多保留 3 个旧日志文件
 - 文件名为 `QtDesktopPet.log.1`、`QtDesktopPet.log.2`、`QtDesktopPet.log.3`
 
+## 发布打包
+
+仓库提供 Windows Release 打包脚本。脚本不负责 CMake 构建，先手动完成 Release 构建，再把 exe 路径传给脚本：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 -ExePath build/release/QtDesktopPet.exe
+```
+
+脚本会生成目录包和 zip：
+
+```text
+dist/QtDesktopPet-<version>-windows-x64/
+dist/QtDesktopPet-<version>-windows-x64.zip
+```
+
+发布目录包含：
+
+```text
+QtDesktopPet.exe
+Qt runtime
+resources/characters/
+resources/icons/
+LICENSE
+README.md
+```
+
+脚本会调用 `windeployqt.exe` 收集 Qt 运行库。若当前 PATH 找不到 `windeployqt.exe`，需要指定 Qt bin 目录下的工具路径：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
+  -ExePath build/release/QtDesktopPet.exe `
+  -WindeployQtPath D:\Qt\6.x.x\msvcXXXX_64\bin\windeployqt.exe
+```
+
+生成 Inno Setup 安装器：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
+  -ExePath build/release/QtDesktopPet.exe `
+  -BuildInstaller
+```
+
+安装器最终默认输出到项目根目录：
+
+```text
+QtDesktopPet-<version>-windows-x64-setup.exe
+```
+
+脚本会先让 Inno Setup 输出到当前盘符下的纯 ASCII 临时目录，例如 `D:\QtDesktopPetInstallerOutput`，再把最终安装包复制回项目根目录，避免中文项目路径下出现 `EndUpdateResource failed (5)`。如果需要改变最终安装包目录，可传入 `-InstallerOutputDir`：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
+  -ExePath build/release/QtDesktopPet.exe `
+  -BuildInstaller `
+  -InstallerOutputDir D:\ReleaseOutput
+```
+
+如果需要改变 Inno Setup 的临时编译输出目录，可传入 `-InstallerWorkOutputDir`。
+
+脚本默认优先查找：
+
+```text
+D:\Inno Setup 7\ISCC.exe
+D:\Inno Setup 6\ISCC.exe
+C:\Program Files (x86)\Inno Setup 7\ISCC.exe
+C:\Program Files (x86)\Inno Setup 6\ISCC.exe
+```
+
+如果 Inno Setup 安装在其他位置，可传入 `-InnoCompilerPath`。
+
+安装器卸载时会询问是否同时删除用户配置、导入角色、聊天记录和日志；用户确认后会在卸载完成阶段删除当前用户下的 QtDesktopPet 数据目录。
+
 ## 开发诊断
 
 仓库提供开发用性能采样脚本，不进入普通用户发布包：
@@ -170,7 +264,7 @@ reports/perf/
 docs/performance_stability_check.md
 ```
 
-发布包应排除 `tools/`、`docs/`、`reports/`、`build/` 和 `.git/`，只保留运行必需文件、`resources/characters/`、`resources/icons/`、`LICENSE` 和必要说明。
+发布包应排除 `tools/`、`docs/`、`reports/`、`build/`、`dist/` 和 `.git/`，只保留运行必需文件、`resources/characters/`、`resources/icons/`、`LICENSE` 和必要说明。
 
 ## AI 配置和聊天
 

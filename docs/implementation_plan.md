@@ -84,7 +84,7 @@ cmake -S . -B build/mingw-debug -G Ninja `
 
 ## 3. 角色包约定
 
-`resources/characters/shiroko` 目录作为当前默认角色包。角色包按 `resources/characters/<characterId>/` 组织，后续新增角色包时放在同级子目录。
+`resources/characters/shiroko` 目录作为当前默认内置角色包。内置角色按 `resources/characters/<characterId>/` 组织，用户导入角色复制到 `QStandardPaths::AppDataLocation/characters/<characterId>/`。
 
 已检查到的结构：
 
@@ -504,6 +504,7 @@ tools/
 docs/
 reports/
 build/
+dist/
 .git/
 ```
 
@@ -586,12 +587,14 @@ build/
    懒加载当前为状态级首次播放加载，并已接入主线程分批预热和状态级 LRU 卸载；单轮预热不会反复重新加载刚被 LRU 卸载的状态
    Windows 下 API Key 使用 DPAPI 加密保存，非 Windows 需用户确认后才允许明文保存
    运行时资源优先读取可执行文件同级 resources/，找不到时回退到源码目录 resources/
+   已支持角色文件夹导入、角色切换和删除用户导入角色：验证通过后复制到用户数据目录，验证失败不做文件操作；内置角色不可删除
+   已新增 Windows 发布打包脚本和 Inno Setup 安装器脚本；脚本不负责 CMake 构建，安装器卸载时可由用户确认后清理当前用户数据目录
 ```
 
 当前实现与计划仍存在差异：
 
 ```text
-1. SettingsDialog 仍是最小设置界面，尚未包含完整角色切换流程和更完整的分区布局
+1. SettingsDialog 仍是最小设置界面，角色页已有导入、切换和删除用户角色，但尚未包含导出和更完整的角色管理流程
 2. 对话历史已有内存上限和可选本地保存，但尚未提供导出、搜索或完整管理界面
 3. 状态级懒加载尚未包含后台线程预热、单帧级缓存和长期压测记录
 4. README 和开发文档已开始同步当前进度，但仍需随功能继续维护
@@ -639,6 +642,6 @@ build/
 
 ```text
 1. shiroko 素材是否允许作为正式开源发布素材继续保留在仓库中
-2. 设置页下一步先完善角色包配置，还是先补发布打包配置
+2. 角色管理下一步是否需要导出、打开用户角色目录
 3. 对话历史后续是否需要导出、搜索或按角色/Provider 分组管理
 ```

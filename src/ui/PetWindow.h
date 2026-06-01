@@ -54,6 +54,7 @@ protected:
 
 private:
     void loadInitialImage();
+    bool loadCharacterPackage(const QString &characterId, bool centerWindow);
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
     void startChat();

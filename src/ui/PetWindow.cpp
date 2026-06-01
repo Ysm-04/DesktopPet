@@ -81,6 +81,11 @@ AppConfig normalizedAppConfig(AppConfig config)
     config.requestContextMessageLimit = qBound(0, config.requestContextMessageLimit, 200);
     config.memoryHistoryMessageLimit = evenBoundedHistoryLimit(config.memoryHistoryMessageLimit, 2, 5000);
     config.savedHistoryMessageLimit = evenBoundedHistoryLimit(config.savedHistoryMessageLimit, 2, 10000);
+    config.characterId = config.characterId.trimmed();
+    if (!CharacterPackageRepository::hasPackage(config.characterId))
+    {
+        config.characterId = CharacterPackageRepository::defaultCharacterId();
+    }
     return config;
 }
 
@@ -167,6 +172,7 @@ PetWindow::~PetWindow()
 void PetWindow::applyAppConfig(const AppConfig &config)
 {
     const AppConfig normalizedConfig = normalizedAppConfig(config);
+    const bool characterChanged = m_appConfig.characterId != normalizedConfig.characterId;
     const bool rebuildClips = !qFuzzyCompare(m_appConfig.scale, normalizedConfig.scale)
         || m_appConfig.performanceMode != normalizedConfig.performanceMode
         || m_appConfig.enableLazyLoad != normalizedConfig.enableLazyLoad;
@@ -186,7 +192,12 @@ void PetWindow::applyAppConfig(const AppConfig &config)
         move(m_appConfig.windowPosition);
     }
 
-    if (rebuildClips && !m_characterPackage.states.isEmpty())
+    if (characterChanged)
+    {
+        m_frameAnimator.stop();
+        loadCharacterPackage(m_appConfig.characterId, false);
+    }
+    else if (rebuildClips && !m_characterPackage.states.isEmpty())
     {
         const QString previousState = m_stateMachine.currentState().isEmpty()
             ? QStringLiteral("idle")
@@ -782,22 +793,41 @@ void PetWindow::mouseReleaseEvent(QMouseEvent *event)
 
 void PetWindow::loadInitialImage()
 {
+    loadCharacterPackage(m_appConfig.characterId, true);
+}
+
+bool PetWindow::loadCharacterPackage(const QString &characterId, bool centerWindow)
+{
+    const QString requestedCharacterId = CharacterPackageRepository::hasPackage(characterId)
+        ? characterId
+        : CharacterPackageRepository::defaultCharacterId();
     QString loadError;
-    m_characterPackage = CharacterPackageLoader::load(CharacterPackageRepository::defaultPackagePath(), &loadError);
+    CharacterPackage package = CharacterPackageLoader::load(CharacterPackageRepository::packagePath(requestedCharacterId), &loadError);
+    if (!loadError.isEmpty() && requestedCharacterId != CharacterPackageRepository::defaultCharacterId())
+    {
+        Logger::warning(QStringLiteral("Character package load failed: id=%1 error=%2")
+            .arg(requestedCharacterId, loadError));
+        loadError.clear();
+        package = CharacterPackageLoader::load(CharacterPackageRepository::defaultPackagePath(), &loadError);
+        m_appConfig.characterId = CharacterPackageRepository::defaultCharacterId();
+    }
+
     if (!loadError.isEmpty())
     {
         Logger::warning(QStringLiteral("Character package load failed: ") + loadError);
     }
 
+    m_characterPackage = package;
     buildAnimationClips();
 
     if (m_clips.contains(QStringLiteral("idle")))
     {
-        playResolvedState(m_stateMachine.start(), true);
-        return;
+        playResolvedState(m_stateMachine.start(), centerWindow);
+        return true;
     }
 
-    setDisplayImage(CharacterPackageRepository::defaultPreviewPath(), true);
+    setDisplayImage(CharacterPackageRepository::previewPath(m_appConfig.characterId), centerWindow);
+    return !m_characterPackage.states.isEmpty();
 }
 
 void PetWindow::buildAnimationClips()

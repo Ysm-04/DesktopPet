@@ -50,6 +50,13 @@ QJsonObject chatObjectFromConfig(const AppConfig &config)
     return chat;
 }
 
+QJsonObject characterObjectFromConfig(const AppConfig &config)
+{
+    QJsonObject character;
+    character.insert(QStringLiteral("id"), config.characterId);
+    return character;
+}
+
 QString normalizedProviderName(const QString &provider)
 {
     const QString normalized = provider.trimmed().toLower();
@@ -245,6 +252,12 @@ AppConfig ConfigManager::loadAppConfig() const
         config.savedHistoryMessageLimit = chat.value(QStringLiteral("savedHistoryMessageLimit")).toInt(config.savedHistoryMessageLimit);
     }
 
+    const QJsonObject character = root.value(QStringLiteral("character")).toObject();
+    if (character.contains(QStringLiteral("id")))
+    {
+        config.characterId = character.value(QStringLiteral("id")).toString(config.characterId).trimmed();
+    }
+
     return config;
 }
 
@@ -332,6 +345,7 @@ bool ConfigManager::saveAppConfig(const AppConfig &config) const
     root.insert(QStringLiteral("window"), windowObjectFromConfig(config));
     root.insert(QStringLiteral("performance"), performanceObjectFromConfig(config));
     root.insert(QStringLiteral("chat"), chatObjectFromConfig(config));
+    root.insert(QStringLiteral("character"), characterObjectFromConfig(config));
 
     QFile file(appConfigPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))

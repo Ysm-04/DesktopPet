@@ -78,6 +78,10 @@ target_link_libraries(QtDesktopPet
         Qt6::Widgets
 )
 
+set_target_properties(QtDesktopPet PROPERTIES
+    WIN32_EXECUTABLE TRUE
+)
+
 if (WIN32)
     set_source_files_properties(resources/icons/app_icon.rc
         PROPERTIES

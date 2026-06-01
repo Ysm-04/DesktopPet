@@ -15,7 +15,7 @@
 | 显示器 / DPI | TODO |
 | Qt 版本 | TODO |
 | 角色包 | `resources/characters/shiroko` |
-| AppConfig 关键项 | scale=TODO, performanceMode=TODO, pauseWhenHidden=TODO, enableLazyLoad=TODO, enableAnimationPrewarm=TODO, animationCacheLimitMb=TODO, unloadAnimationsWhenHidden=TODO |
+| AppConfig 关键项 | characterId=TODO, scale=TODO, performanceMode=TODO, pauseWhenHidden=TODO, enableLazyLoad=TODO, enableAnimationPrewarm=TODO, animationCacheLimitMb=TODO, unloadAnimationsWhenHidden=TODO |
 
 ## 采样脚本
 
@@ -85,6 +85,7 @@ tools/
 docs/
 reports/
 build/
+dist/
 .git/
 ```
 
@@ -98,6 +99,16 @@ resources/icons/
 LICENSE
 README.md
 ```
+
+安装器卸载验证：
+
+```text
+1. 正常卸载时程序文件应删除
+2. 选择不删除用户数据时，配置、导入角色、聊天记录和日志应保留
+3. 选择删除用户数据时，卸载完成阶段应删除当前用户下的 QtDesktopPet 数据目录
+```
+
+安装器最终文件默认放在项目根目录。Inno Setup 编译阶段使用当前盘符下的纯 ASCII 临时目录，例如 `D:\QtDesktopPetInstallerOutput`，再复制最终安装包回项目根目录，用于规避中文项目路径下可能出现的 `EndUpdateResource failed (5)`。
 
 运行时资源查找顺序：
 

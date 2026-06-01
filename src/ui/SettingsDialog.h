@@ -45,6 +45,9 @@ private:
     void testConnection();
     void setTestStatus(const QString &message, const QString &state);
     void clearConversationHistory();
+    void reloadCharacterList(const QString &selectedCharacterId = {});
+    void importCharacterFolder();
+    void deleteSelectedCharacter();
 
     QComboBox *m_providerComboBox = nullptr;
     QLineEdit *m_baseUrlEdit = nullptr;
@@ -71,6 +74,9 @@ private:
     QPushButton *m_clearConversationHistoryButton = nullptr;
     QLabel *m_clearConversationStatusLabel = nullptr;
     QComboBox *m_characterComboBox = nullptr;
+    QPushButton *m_importCharacterButton = nullptr;
+    QPushButton *m_deleteCharacterButton = nullptr;
+    QLabel *m_characterStatusLabel = nullptr;
     AIConfigStore m_configStore;
     AIConfigStore m_acceptedConfigStore;
     AppConfig m_appConfig;
