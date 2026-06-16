@@ -1,0 +1,136 @@
+#include "IntentRouter.h"
+
+#include <QStringList>
+#include <QtGlobal>
+
+namespace
+{
+bool containsAny(const QString &text, const QStringList &keywords)
+{
+    for (const QString &keyword : keywords)
+    {
+        if (text.contains(keyword, Qt::CaseInsensitive))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isReminderIntent(const QString &text)
+{
+    static const QStringList keywords = {
+        QStringLiteral("提醒"),
+        QStringLiteral("提醒我"),
+        QStringLiteral("叫我"),
+        QStringLiteral("闹钟"),
+        QStringLiteral("到点"),
+    };
+    return containsAny(text, keywords);
+}
+
+bool isFileOperationIntent(const QString &text)
+{
+    static const QStringList keywords = {
+        QStringLiteral("文件"),
+        QStringLiteral("文件夹"),
+        QStringLiteral("目录"),
+        QStringLiteral("保存到"),
+        QStringLiteral("截图"),
+        QStringLiteral("打包"),
+        QStringLiteral("压缩"),
+        QStringLiteral("复制"),
+        QStringLiteral("备份"),
+        QStringLiteral("重命名"),
+        QStringLiteral("删除"),
+        QStringLiteral("移动"),
+        QStringLiteral("读取"),
+        QStringLiteral(".txt"),
+        QStringLiteral(".md"),
+        QStringLiteral("日志"),
+    };
+    return containsAny(text, keywords);
+}
+
+bool isWeatherIntent(const QString &text)
+{
+    static const QStringList keywords = {
+        QStringLiteral("天气"),
+        QStringLiteral("气温"),
+        QStringLiteral("温度"),
+        QStringLiteral("冷不冷"),
+        QStringLiteral("热不热"),
+        QStringLiteral("下雨"),
+        QStringLiteral("降雨"),
+        QStringLiteral("带伞"),
+        QStringLiteral("刮风"),
+        QStringLiteral("风力"),
+        QStringLiteral("湿度"),
+        QStringLiteral("空气质量"),
+        QStringLiteral("雾霾"),
+        QStringLiteral("适合出门"),
+        QStringLiteral("穿什么"),
+        QStringLiteral("外面怎么样"),
+    };
+    return containsAny(text, keywords);
+}
+
+bool isLaunchAppIntent(const QString &text)
+{
+    static const QStringList blockedFileKeywords = {
+        QStringLiteral("打开文件"),
+        QStringLiteral("打开文件夹"),
+        QStringLiteral("打开目录"),
+        QStringLiteral("读取文件"),
+        QStringLiteral("复制文件"),
+        QStringLiteral("备份文件"),
+        QStringLiteral("重命名文件"),
+        QStringLiteral("保存到"),
+        QStringLiteral("截图"),
+        QStringLiteral("打包"),
+        QStringLiteral("压缩"),
+        QStringLiteral("脚本"),
+        QStringLiteral("命令"),
+    };
+    if (containsAny(text, blockedFileKeywords))
+    {
+        return false;
+    }
+
+    static const QStringList keywords = {
+        QStringLiteral("打开"),
+        QStringLiteral("启动"),
+        QStringLiteral("运行"),
+        QStringLiteral("唤起"),
+    };
+    return containsAny(text, keywords);
+}
+}
+
+UserIntent IntentRouter::route(const QString &text) const
+{
+    const QString trimmedText = text.trimmed();
+
+    if (isReminderIntent(trimmedText))
+    {
+        return {UserIntentType::Reminder, trimmedText};
+    }
+
+    if (isFileOperationIntent(trimmedText))
+    {
+        return {UserIntentType::FileOperation, trimmedText};
+    }
+
+    if (isWeatherIntent(trimmedText))
+    {
+        return {UserIntentType::Weather, trimmedText};
+    }
+
+    if (isLaunchAppIntent(trimmedText))
+    {
+        return {UserIntentType::LaunchApp, trimmedText};
+    }
+
+    return {UserIntentType::Chat, trimmedText};
+}
