@@ -14,6 +14,7 @@
 #include <QJsonValue>
 #include <QSet>
 #include <QStandardPaths>
+#include <QStringList>
 
 namespace
 {
@@ -533,18 +534,6 @@ QVector<CharacterPackageInfo> CharacterPackageRepository::availablePackages()
     }
 
     return packages;
-}
-
-QStringList CharacterPackageRepository::availablePackageIds()
-{
-    QStringList packageIds;
-    const QVector<CharacterPackageInfo> packages = availablePackages();
-    for (const CharacterPackageInfo &package : packages)
-    {
-        packageIds.append(package.id);
-    }
-
-    return packageIds;
 }
 
 CharacterPackageValidationResult CharacterPackageRepository::validatePackageDirectoryWithDetails(const QString &directoryPath)

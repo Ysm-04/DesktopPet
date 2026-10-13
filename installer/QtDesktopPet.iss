@@ -1,9 +1,9 @@
 #define AppName "QtDesktopPet"
 #ifndef AppVersion
-#define AppVersion "0.1.0"
+#define AppVersion "0.2.0"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\dist\QtDesktopPet-0.1.0-windows-x64"
+#define SourceDir "..\dist\QtDesktopPet-0.2.0-windows-x64"
 #endif
 #ifndef OutputDir
 #define OutputDir "..\dist\installer"
@@ -22,15 +22,19 @@ OutputBaseFilename=QtDesktopPet-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+ShowLanguageDialog=no
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\resources\icons\app_icon.ico
 UninstallDisplayIcon={app}\QtDesktopPet.exe
 
+[Languages]
+Name: "chinesesimplified"; MessagesFile: ".\languages\ChineseSimplified.isl"
+
 [Tasks]
-Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
-Name: "startup"; Description: "开机自启动"; GroupDescription: "Additional options:"; Flags: unchecked
+Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
+Name: "startup"; Description: "开机自启动"; GroupDescription: "附加选项："; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -40,11 +44,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Icons]
 Name: "{group}\QtDesktopPet"; Filename: "{app}\QtDesktopPet.exe"; WorkingDir: "{app}"
-Name: "{group}\Uninstall QtDesktopPet"; Filename: "{uninstallexe}"
+Name: "{group}\卸载 QtDesktopPet"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\QtDesktopPet"; Filename: "{app}\QtDesktopPet.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\QtDesktopPet.exe"; Description: "Launch QtDesktopPet"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\QtDesktopPet.exe"; Description: "启动 QtDesktopPet"; Flags: nowait postinstall skipifsilent
 
 [Code]
 var

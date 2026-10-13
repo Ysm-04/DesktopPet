@@ -22,7 +22,6 @@ public:
     void resume();
     void stop();
     bool isPlaying() const;
-    bool isPaused() const;
     QString currentStateName() const;
 
 private:

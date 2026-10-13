@@ -25,4 +25,6 @@ cmake-build-*/
 /config/
 /logs/
 /reports/perf/
+/reports/qa/
+/internal/qa/out/
 *.broken.json

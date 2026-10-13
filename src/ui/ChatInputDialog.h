@@ -17,6 +17,7 @@ class ChatInputDialog : public QDialog
 {
 public:
     using SubmitCallback = std::function<bool(const QString &, bool)>;
+    using WebToggleChangedCallback = std::function<void(bool)>;
 
     explicit ChatInputDialog(int maxLength, QWidget *parent = nullptr);
 
@@ -25,6 +26,7 @@ public:
     void setWebEnabled(bool enabled);
     void setWebToggleAvailable(bool available, const QString &toolTip = QString());
     void setSubmitCallback(SubmitCallback callback);
+    void setWebToggleChangedCallback(WebToggleChangedCallback callback);
     void showAt(const QPoint &anchorPosition);
 
 protected:
@@ -48,6 +50,7 @@ private:
     QCheckBox *m_webToggleCheckBox = nullptr;
     QPushButton *m_sendButton = nullptr;
     SubmitCallback m_submitCallback;
+    WebToggleChangedCallback m_webToggleChangedCallback;
     QPoint m_dragStartPosition;
     QPoint m_dragWindowPosition;
     int m_maxLength = 0;

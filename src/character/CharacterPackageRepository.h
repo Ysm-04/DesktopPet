@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QString>
-#include <QStringList>
 #include <QVector>
 
 struct CharacterPackageInfo
@@ -40,7 +39,6 @@ public:
     static bool hasBuiltInPackage(const QString &characterId);
     static bool hasUserPackage(const QString &characterId);
     static QVector<CharacterPackageInfo> availablePackages();
-    static QStringList availablePackageIds();
     static CharacterPackageValidationResult validatePackageDirectoryWithDetails(const QString &directoryPath);
     static bool validatePackageDirectory(
         const QString &directoryPath,

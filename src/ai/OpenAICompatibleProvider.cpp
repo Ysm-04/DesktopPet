@@ -361,14 +361,25 @@ ChatResponse OpenAICompatibleProvider::parseResponse(QNetworkReply *reply, const
         return {false, {}, QStringLiteral("AI response has no choices."), httpStatus};
     }
 
-    const QJsonObject message = choices.first().toObject().value(QStringLiteral("message")).toObject();
+    const QJsonObject choice = choices.first().toObject();
+    const QJsonObject message = choice.value(QStringLiteral("message")).toObject();
     const QString content = message.value(QStringLiteral("content")).toString();
     if (content.isEmpty())
     {
+        const QString finishReason = choice.value(QStringLiteral("finish_reason")).toString().trimmed();
         Logger::warning(QStringLiteral("AI response content is empty: %1 httpStatus=%2 bodySummary=\"%3\"")
             .arg(AIDiagnostics::diagnosticContext(m_config, reply->request().url()))
             .arg(httpStatus)
             .arg(AIDiagnostics::responseBodySummary(body)));
+        if (finishReason == QStringLiteral("length"))
+        {
+            return {
+                false,
+                {},
+                QStringLiteral("AI response reached the token limit before producing content. Increase Max Tokens."),
+                httpStatus,
+            };
+        }
         return {false, {}, QStringLiteral("AI response content is empty."), httpStatus};
     }
 

@@ -3,7 +3,6 @@
 #include "../config/AIConfig.h"
 #include "../config/AppConfig.h"
 #include "../ai/LLMTypes.h"
-#include "../launcher/AppLaunchTypes.h"
 #include "../reminder/ReminderTypes.h"
 #include "../web/WebConfig.h"
 #include "../weather/WeatherConfig.h"
@@ -23,7 +22,6 @@ class QListWidget;
 class QPushButton;
 class QSpinBox;
 class LLMProvider;
-class AppLaunchManager;
 class WebChatManager;
 class WeatherManager;
 
@@ -35,7 +33,6 @@ public:
         const AppConfig &appConfig,
         const WeatherConfig &weatherConfig,
         const WebConfig &webConfig,
-        const AppLaunchConfig &appLaunchConfig,
         const QVector<ChatMessage> &conversationHistory,
         const QVector<ReminderItem> &reminders,
         std::function<bool()> aiTestBlocked,
@@ -51,7 +48,6 @@ public:
     AppConfig appConfig() const;
     WeatherConfig weatherConfig() const;
     WebConfig webConfig() const;
-    AppLaunchConfig appLaunchConfig() const;
 
 protected:
     void accept() override;
@@ -90,13 +86,6 @@ private:
     void testWeatherDefaultCity();
     void refreshWebCapabilityStatus();
     void testWebMode();
-    void reloadLaunchAppList();
-    void updateLaunchAppButtons();
-    QString selectedLaunchAppId() const;
-    void addLaunchApp();
-    void editSelectedLaunchApp();
-    void deleteSelectedLaunchApp();
-    void testSelectedLaunchApp();
 
     QComboBox *m_providerComboBox = nullptr;
     QLineEdit *m_baseUrlEdit = nullptr;
@@ -142,14 +131,6 @@ private:
     QCheckBox *m_webShowCitationsCheckBox = nullptr;
     QPushButton *m_testWebButton = nullptr;
     QLabel *m_webStatusLabel = nullptr;
-    QCheckBox *m_launchEnabledCheckBox = nullptr;
-    QCheckBox *m_launchManualSelectionCheckBox = nullptr;
-    QListWidget *m_launchAppListWidget = nullptr;
-    QPushButton *m_addLaunchAppButton = nullptr;
-    QPushButton *m_editLaunchAppButton = nullptr;
-    QPushButton *m_deleteLaunchAppButton = nullptr;
-    QPushButton *m_testLaunchAppButton = nullptr;
-    QLabel *m_launchStatusLabel = nullptr;
     QComboBox *m_characterComboBox = nullptr;
     QPushButton *m_importCharacterButton = nullptr;
     QPushButton *m_deleteCharacterButton = nullptr;
@@ -174,7 +155,6 @@ private:
     AppConfig m_appConfig;
     WeatherConfig m_weatherConfig;
     WebConfig m_webConfig;
-    AppLaunchConfig m_appLaunchConfig;
     QVector<ChatMessage> m_conversationHistory;
     QVector<ReminderItem> m_reminders;
     QString m_currentProvider;
@@ -185,7 +165,6 @@ private:
     std::function<bool(QString *)> m_clearFinishedReminders;
     std::function<void(const QString &, double)> m_playReminderSound;
     std::unique_ptr<LLMProvider> m_testProvider;
-    std::unique_ptr<AppLaunchManager> m_launchTestManager;
     std::unique_ptr<WebChatManager> m_webTestManager;
     std::unique_ptr<WeatherManager> m_weatherTestManager;
     bool m_hasAcceptedConfigStore = false;

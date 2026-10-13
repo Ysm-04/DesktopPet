@@ -5,7 +5,29 @@
 #include <utility>
 
 ConversationManager::ConversationManager()
-    : m_systemPrompt(QStringLiteral("你是一个桌面宠物助手。回复要简短、自然，适合显示在桌宠气泡里。"))
+    : m_systemPrompt(QStringLiteral(
+        "你是一个 Windows 桌面宠物助手，常驻在用户桌面上。回复要简短、自然、友好，适合显示在桌宠气泡里；除非用户明确要求详细解释，否则不要长篇输出。\n"
+        "\n"
+        "你可以帮助用户：\n"
+        "1. 普通聊天、解释问题、整理信息。\n"
+        "2. 创建和管理提醒：\n"
+        "   - 例：“10分钟后提醒我喝水”“明天9点提醒我开会”“每天9点提醒我打卡”“每周一上午10点提醒我周会”“提醒列表”“取消喝水提醒”。\n"
+        "   - 支持一次性提醒和每天/每周/每月重复提醒。\n"
+        "3. 查询天气：\n"
+        "   - 例：“西安天气怎么样”“明天北京天气”“未来三天上海天气”。\n"
+        "   - 建议用户使用市级城市名；区县、乡镇、街道不保证精确。\n"
+        "4. 联网模式：\n"
+        "   - 用户需要打开输入框里的“联网”开关。\n"
+        "   - 只有当前 AI 配置支持原生联网时才可用，例如 OpenAI 官方联网能力或 Gemini Google Search grounding。\n"
+        "   - DeepSeek 官方 API、第三方 OpenAI-Compatible API 通常不具备可确认的原生联网能力；遇到这类配置时，应明确提醒用户当前配置无法联网，不要假装已经搜索。\n"
+        "\n"
+        "回答规则：\n"
+        "- 如果用户只是闲聊，直接自然回复。\n"
+        "- 如果用户问“你能做什么”，用简短列表说明上述功能和示例。\n"
+        "- 如果用户要创建提醒或查询天气，可以直接提示用户按示例输入。\n"
+        "- 当前应用不能读取、搜索、创建、修改或删除本地文件，不能启动本地应用，也不能执行命令或脚本；遇到这类请求要明确说明能力边界。\n"
+        "- 如果用户询问最新信息但没有开启联网，提醒用户打开“联网”开关；如果当前 AI 配置不支持联网，说明无法使用联网模式。\n"
+        "- 不要声称已经访问本地文件、启动应用或执行系统操作，也不要编造任何未发生的操作结果。"))
 {
 }
 
@@ -108,52 +130,6 @@ void ConversationManager::appendExternalExchange(const QString &userMessage, con
     const ChatMessage user{QStringLiteral("user"), userContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel};
     const ChatMessage assistant{QStringLiteral("assistant"), assistantContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel};
     appendExchange(user, assistant);
-}
-
-void ConversationManager::sendUserMessage(const QString &message, ResponseCallback callback)
-{
-    const QString content = message.trimmed();
-    if (content.isEmpty())
-    {
-        if (callback)
-        {
-            callback({false, {}, QStringLiteral("Message is empty."), 0});
-        }
-        return;
-    }
-
-    if (!m_provider)
-    {
-        if (callback)
-        {
-            callback({false, {}, QStringLiteral("AI provider is not ready."), 0});
-        }
-        return;
-    }
-
-    if (isBusy())
-    {
-        if (callback)
-        {
-            callback({false, {}, QStringLiteral("AI request is already running."), 0});
-        }
-        return;
-    }
-
-    const QDateTime timestamp = QDateTime::currentDateTime();
-    const ChatMessage userMessage{QStringLiteral("user"), content, timestamp, m_currentProvider, m_currentModel};
-    m_provider->sendChatRequest(buildRequest(userMessage), [this, userMessage, callback = std::move(callback)](const ChatResponse &response) mutable {
-        if (response.success)
-        {
-            ChatMessage assistantMessage{QStringLiteral("assistant"), response.content, QDateTime::currentDateTime(), userMessage.provider, userMessage.model};
-            appendExchange(userMessage, assistantMessage);
-        }
-
-        if (callback)
-        {
-            callback(response);
-        }
-    });
 }
 
 void ConversationManager::sendUserMessageStreaming(const QString &message, StreamCallback streamCallback, ResponseCallback callback)

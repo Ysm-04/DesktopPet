@@ -7,9 +7,6 @@
 #include "../character/CharacterPackageLoader.h"
 #include "../character/CharacterPackageRepository.h"
 #include "../config/ConfigManager.h"
-#include "../fileops/FileOperationManager.h"
-#include "../launcher/AppLaunchManager.h"
-#include "../launcher/AppLaunchStore.h"
 #include "../notification/NotificationDispatcher.h"
 #include "../reminder/ReminderCommandHandler.h"
 #include "../reminder/ReminderManager.h"
@@ -33,17 +30,12 @@
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDialog>
-#include <QDialogButtonBox>
-#include <QFileDialog>
-#include <QFileInfo>
 #include <QFont>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHideEvent>
-#include <QInputDialog>
-#include <QLabel>
+#include <QImage>
 #include <QList>
-#include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -51,7 +43,6 @@
 #include <QPointF>
 #include <QPointer>
 #include <QPushButton>
-#include <QCheckBox>
 #include <QRandomGenerator>
 #include <QScreen>
 #include <QSet>
@@ -76,6 +67,51 @@ constexpr int ChatFinishedReturnDelayMs = 1500;
 constexpr int StandardPrewarmIntervalMs = 800;
 constexpr int LowPowerPrewarmIntervalMs = 1500;
 constexpr qint64 BytesPerMegabyte = 1024 * 1024;
+constexpr int ReminderVisibleAlphaThreshold = 24;
+
+QRect visiblePixmapRect(const QPixmap &pixmap)
+{
+    if (pixmap.isNull())
+    {
+        return {};
+    }
+
+    QImage image = pixmap.toImage();
+    if (!image.hasAlphaChannel())
+    {
+        return image.rect();
+    }
+
+    image = image.convertToFormat(QImage::Format_ARGB32);
+    int left = image.width();
+    int top = image.height();
+    int right = -1;
+    int bottom = -1;
+
+    for (int y = 0; y < image.height(); ++y)
+    {
+        const QRgb *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); ++x)
+        {
+            if (qAlpha(line[x]) < ReminderVisibleAlphaThreshold)
+            {
+                continue;
+            }
+
+            left = qMin(left, x);
+            top = qMin(top, y);
+            right = qMax(right, x);
+            bottom = qMax(bottom, y);
+        }
+    }
+
+    if (right < left || bottom < top)
+    {
+        return {};
+    }
+
+    return QRect(QPoint(left, top), QPoint(right, bottom));
+}
 
 int boundedAnimationTargetSide(double sideLength)
 {
@@ -201,8 +237,6 @@ PetWindow::PetWindow(QWidget *parent)
     , m_chatInputDialog(std::make_unique<ChatInputDialog>(MaxUserMessageLength, this))
     , m_conversationManager(std::make_unique<ConversationManager>())
     , m_conversationStore(std::make_unique<ConversationStore>(ConfigManager().conversationHistoryPath()))
-    , m_fileOperationManager(std::make_unique<FileOperationManager>())
-    , m_appLaunchManager(std::make_unique<AppLaunchManager>())
     , m_notificationDispatcher(std::make_unique<NotificationDispatcher>())
     , m_reminderManager(std::make_unique<ReminderManager>())
     , m_reminderSoundPlayer(std::make_unique<ReminderSoundPlayer>())
@@ -255,7 +289,12 @@ PetWindow::PetWindow(QWidget *parent)
     m_chatInputDialog->setSubmitCallback([window](const QString &message, bool webEnabled) {
         return !window.isNull() && window->submitChatMessage(message, webEnabled);
     });
-
+    m_chatInputDialog->setWebToggleChangedCallback([window](bool webEnabled) {
+        if (!window.isNull())
+        {
+            window->saveWebTogglePreference(webEnabled);
+        }
+    });
     m_reminderManager->setTriggeredCallback([window](const ReminderItem &item) {
         if (!window.isNull())
         {
@@ -385,7 +424,6 @@ void PetWindow::openSettingsDialog()
     ConfigManager configManager;
     WeatherStore weatherStore;
     WebStore webStore;
-    AppLaunchStore appLaunchStore;
     QString weatherConfigError;
     const WeatherConfig weatherConfig = weatherStore.load(&weatherConfigError);
     if (!weatherConfigError.isEmpty())
@@ -398,19 +436,11 @@ void PetWindow::openSettingsDialog()
     {
         Logger::warning(QStringLiteral("Web config load warning: ") + webConfigError);
     }
-    QString appLaunchConfigError;
-    const AppLaunchConfig appLaunchConfig = appLaunchStore.load(&appLaunchConfigError);
-    if (!appLaunchConfigError.isEmpty())
-    {
-        Logger::warning(QStringLiteral("Launcher config load warning: ") + appLaunchConfigError);
-    }
-
     SettingsDialog dialog(
         configManager.loadAIConfigStore(),
         currentAppConfig(),
         weatherConfig,
         webConfig,
-        appLaunchConfig,
         m_conversationManager ? m_conversationManager->history() : QVector<ChatMessage>(),
         m_reminderManager ? m_reminderManager->allReminders() : QVector<ReminderItem>(),
         [this]() {
@@ -513,11 +543,6 @@ void PetWindow::openSettingsDialog()
     }
     refreshChatInputWebToggle();
 
-    QString saveLauncherConfigError;
-    if (!appLaunchStore.save(dialog.appLaunchConfig(), &saveLauncherConfigError))
-    {
-        Logger::warning(QStringLiteral("Failed to save launcher config from settings dialog: ") + saveLauncherConfigError);
-    }
 }
 
 void PetWindow::activateFromExternalInstance()
@@ -669,23 +694,6 @@ bool PetWindow::submitChatMessage(const QString &message, bool webEnabled)
         return handleWeatherChatMessage(result.message);
     }
 
-    if (result.action == CommandDispatchAction::FileOperation)
-    {
-        return handleFileOperationChatMessage(result.message);
-    }
-
-    if (result.action == CommandDispatchAction::LaunchApp)
-    {
-        return handleLaunchAppChatMessage(result.message);
-    }
-
-    if (result.action == CommandDispatchAction::UnsupportedTool)
-    {
-        playState(QStringLiteral("talk"), false);
-        showBubbleMessage(result.message);
-        return true;
-    }
-
     saveWebTogglePreference(webEnabled);
     return webEnabled ? submitWebChatMessage(result.message) : submitAiChatMessage(result.message);
 }
@@ -706,6 +714,7 @@ bool PetWindow::handleReminderChatMessage(const QString &message)
     showBubbleMessage(result.message);
     return result.success;
 }
+
 
 bool PetWindow::handleWeatherChatMessage(const QString &message)
 {
@@ -765,305 +774,6 @@ bool PetWindow::handleWeatherChatMessage(const QString &message)
     return true;
 }
 
-bool PetWindow::handleFileOperationChatMessage(const QString &message)
-{
-    if (!m_fileOperationManager)
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("文件操作功能初始化失败。"));
-        return false;
-    }
-
-    const QString text = message.trimmed();
-    const auto contains = [&text](const QString &keyword) {
-        return text.contains(keyword, Qt::CaseInsensitive);
-    };
-    if (contains(QStringLiteral("删除")) || contains(QStringLiteral("移动")) || contains(QStringLiteral("覆盖"))
-        || contains(QStringLiteral("执行")) || contains(QStringLiteral("运行")) || contains(QStringLiteral("脚本")) || contains(QStringLiteral("命令")))
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("文件操作 v1 不支持删除、覆盖、移动、执行脚本或运行命令。"));
-        return false;
-    }
-
-    if (contains(QStringLiteral("截图")) || contains(QStringLiteral("保存到")))
-    {
-        playState(QStringLiteral("talk"), false);
-        showBubbleMessage(QStringLiteral("文件操作 v1 暂不支持截图或把当前内容保存到指定位置。"));
-        return false;
-    }
-
-    if (contains(QStringLiteral("打包")) || contains(QStringLiteral("压缩")) || contains(QStringLiteral("zip")))
-    {
-        playState(QStringLiteral("talk"), false);
-        showBubbleMessage(QStringLiteral("zip 打包需要额外稳定的压缩实现，本版暂不启用；可以先使用复制或备份。"));
-        return false;
-    }
-
-    const auto confirmPlan = [this](const FileOperationPlan &plan) {
-        QString messageText = plan.description;
-        if (!plan.warnings.isEmpty())
-        {
-            messageText += QStringLiteral("\n\n注意：\n") + plan.warnings.join(QLatin1Char('\n'));
-        }
-        messageText += QStringLiteral("\n\n请确认是否执行。");
-        return QMessageBox::warning(
-            this,
-            plan.title,
-            messageText,
-            QMessageBox::Yes | QMessageBox::Cancel,
-            QMessageBox::Cancel) == QMessageBox::Yes;
-    };
-
-    FileOperationResult operationResult;
-    if (contains(QStringLiteral("列出")) || contains(QStringLiteral("目录")) || contains(QStringLiteral("文件夹")))
-    {
-        const QString directoryPath = QFileDialog::getExistingDirectory(
-            this,
-            QStringLiteral("选择要列出的文件夹"),
-            QString(),
-            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-        if (directoryPath.isEmpty())
-        {
-            return false;
-        }
-
-        operationResult = m_fileOperationManager->executeListDirectory(m_fileOperationManager->listDirectoryPlan(directoryPath));
-    }
-    else if (contains(QStringLiteral("复制")))
-    {
-        const QString sourceFilePath = QFileDialog::getOpenFileName(this, QStringLiteral("选择要复制的文件"));
-        if (sourceFilePath.isEmpty())
-        {
-            return false;
-        }
-        const QString targetDirectoryPath = QFileDialog::getExistingDirectory(
-            this,
-            QStringLiteral("选择复制到的文件夹"),
-            QString(),
-            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-        if (targetDirectoryPath.isEmpty())
-        {
-            return false;
-        }
-
-        const FileOperationPlan plan = m_fileOperationManager->copyFilePlan(sourceFilePath, targetDirectoryPath);
-        if (!confirmPlan(plan))
-        {
-            return false;
-        }
-        operationResult = m_fileOperationManager->executeCopyFile(plan);
-    }
-    else if (contains(QStringLiteral("备份")))
-    {
-        const QString sourceFilePath = QFileDialog::getOpenFileName(this, QStringLiteral("选择要备份的文件"));
-        if (sourceFilePath.isEmpty())
-        {
-            return false;
-        }
-
-        const FileOperationPlan plan = m_fileOperationManager->backupFilePlan(sourceFilePath);
-        if (!confirmPlan(plan))
-        {
-            return false;
-        }
-        operationResult = m_fileOperationManager->executeBackupFile(plan);
-    }
-    else if (contains(QStringLiteral("重命名")))
-    {
-        const QString sourceFilePath = QFileDialog::getOpenFileName(this, QStringLiteral("选择要重命名的文件"));
-        if (sourceFilePath.isEmpty())
-        {
-            return false;
-        }
-
-        bool ok = false;
-        const QString newFileName = QInputDialog::getText(
-            this,
-            QStringLiteral("重命名文件"),
-            QStringLiteral("新文件名"),
-            QLineEdit::Normal,
-            QFileInfo(sourceFilePath).fileName(),
-            &ok).trimmed();
-        if (!ok || newFileName.isEmpty())
-        {
-            return false;
-        }
-
-        const FileOperationPlan plan = m_fileOperationManager->renameFilePlan(sourceFilePath, newFileName);
-        if (!confirmPlan(plan))
-        {
-            return false;
-        }
-        operationResult = m_fileOperationManager->executeRenameFile(plan);
-    }
-    else
-    {
-        const QString sourceFilePath = QFileDialog::getOpenFileName(
-            this,
-            QStringLiteral("选择要读取的文本文件"),
-            QString(),
-            QStringLiteral("Text Files (*.txt *.md *.markdown *.log *.json *.csv *.ini *.xml *.yaml *.yml);;All Files (*)"));
-        if (sourceFilePath.isEmpty())
-        {
-            return false;
-        }
-
-        operationResult = m_fileOperationManager->executeReadTextFile(m_fileOperationManager->readTextFilePlan(sourceFilePath));
-    }
-
-    if (!operationResult.success)
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(operationResult.errorMessage.isEmpty() ? QStringLiteral("文件操作失败。") : operationResult.errorMessage);
-        return false;
-    }
-
-    playState(QStringLiteral("talk"), false);
-    const QString output = operationResult.outputText.trimmed();
-    showBubbleMessage(output.isEmpty() ? operationResult.message : output);
-    return true;
-}
-
-bool PetWindow::handleLaunchAppChatMessage(const QString &message)
-{
-    if (!m_appLaunchManager)
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(QStringLiteral("应用启动功能初始化失败。"));
-        return false;
-    }
-
-    AppLaunchStore store;
-    QString loadError;
-    AppLaunchConfig config = store.load(&loadError);
-    if (!loadError.isEmpty())
-    {
-        Logger::warning(QStringLiteral("Launcher config load warning: ") + loadError);
-    }
-
-    AppLaunchPlan plan = m_appLaunchManager->resolveLaunchPlan(message, config);
-    if (plan.needsManualSelection)
-    {
-        const QString executablePath = QFileDialog::getOpenFileName(
-            this,
-            QStringLiteral("选择要启动的应用"),
-            QString(),
-            QStringLiteral("Applications (*.exe)"));
-        if (executablePath.isEmpty())
-        {
-            return false;
-        }
-
-        plan = m_appLaunchManager->manualSelectionPlan(message, executablePath);
-    }
-
-    if (!plan.success)
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(plan.errorMessage.isEmpty() ? QStringLiteral("没有找到可启动的应用。") : plan.errorMessage);
-        return false;
-    }
-
-    QString confirmText = QStringLiteral("应用：%1\n来源：%2")
-        .arg(plan.displayName.isEmpty() ? plan.requestedName : plan.displayName,
-             plan.matchSource.isEmpty() ? QStringLiteral("未知") : plan.matchSource);
-    if (!plan.executablePath.trimmed().isEmpty())
-    {
-        confirmText += QStringLiteral("\n路径：") + plan.executablePath;
-    }
-    if (!plan.shortcutPath.trimmed().isEmpty())
-    {
-        confirmText += QStringLiteral("\n快捷方式：") + plan.shortcutPath;
-    }
-    if (!plan.workingDirectory.trimmed().isEmpty())
-    {
-        confirmText += QStringLiteral("\n工作目录：") + plan.workingDirectory;
-    }
-    QDialog confirmDialog(this);
-    confirmDialog.setWindowTitle(QStringLiteral("启动应用"));
-    confirmDialog.setModal(true);
-
-    auto *confirmLayout = new QVBoxLayout(&confirmDialog);
-    confirmLayout->setContentsMargins(18, 18, 18, 14);
-    confirmLayout->setSpacing(12);
-
-    auto *questionLabel = new QLabel(QStringLiteral("确认启动该应用？"), &confirmDialog);
-    QFont questionFont = questionLabel->font();
-    questionFont.setBold(true);
-    questionLabel->setFont(questionFont);
-    confirmLayout->addWidget(questionLabel);
-
-    auto *detailLabel = new QLabel(confirmText, &confirmDialog);
-    detailLabel->setWordWrap(true);
-    detailLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    detailLabel->setMinimumWidth(520);
-    confirmLayout->addWidget(detailLabel);
-
-    auto *rememberCheckBox = new QCheckBox(QStringLiteral("记住为此名称，下次直接匹配"), &confirmDialog);
-    rememberCheckBox->setVisible(plan.canRemember);
-    confirmLayout->addWidget(rememberCheckBox);
-
-    auto *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &confirmDialog);
-    if (QPushButton *okButton = buttonBox->button(QDialogButtonBox::Ok))
-    {
-        okButton->setText(QStringLiteral("启动"));
-    }
-    if (QPushButton *cancelButton = buttonBox->button(QDialogButtonBox::Cancel))
-    {
-        cancelButton->setText(QStringLiteral("取消"));
-    }
-    QObject::connect(buttonBox, &QDialogButtonBox::accepted, &confirmDialog, &QDialog::accept);
-    QObject::connect(buttonBox, &QDialogButtonBox::rejected, &confirmDialog, &QDialog::reject);
-    confirmLayout->addWidget(buttonBox);
-
-    if (confirmDialog.exec() != QDialog::Accepted)
-    {
-        return false;
-    }
-
-    const AppLaunchResult result = m_appLaunchManager->executeLaunchPlan(plan);
-    if (!result.success)
-    {
-        playState(QStringLiteral("error"), false);
-        showBubbleMessage(result.errorMessage.isEmpty() ? QStringLiteral("启动应用失败。") : result.errorMessage);
-        return false;
-    }
-
-    QString bubbleText = result.message;
-    if (plan.canRemember && rememberCheckBox->isChecked())
-    {
-        RegisteredApp app = m_appLaunchManager->registeredAppFromPlan(
-            plan,
-            {plan.requestedName, plan.displayName});
-
-        bool replaced = false;
-        for (RegisteredApp &existingApp : config.apps)
-        {
-            if (existingApp.id == app.id)
-            {
-                existingApp = app;
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced)
-        {
-            config.apps.append(app);
-        }
-
-        QString saveError;
-        if (!store.save(config, &saveError))
-        {
-            Logger::warning(QStringLiteral("Failed to save launcher config after manual app selection: ") + saveError);
-            bubbleText += QStringLiteral("\n但保存应用别名失败。");
-        }
-    }
-
-    playState(QStringLiteral("talk"), false);
-    showBubbleMessage(bubbleText.isEmpty() ? QStringLiteral("应用已启动。") : bubbleText);
-    return true;
-}
 
 
 bool PetWindow::submitWebChatMessage(const QString &message)
@@ -1438,21 +1148,22 @@ void PetWindow::updateReminderActionPosition()
 
     m_reminderActionPanel->adjustSize();
     const QSize panelSize = m_reminderActionPanel->sizeHint();
-    const QRect petGeometry = frameGeometry();
-    constexpr int PanelSideSpacing = 8;
+    const QRect petGeometry = visiblePetGeometry();
+    const int petReferenceSide = qMin(petGeometry.width(), petGeometry.height());
+    const int panelSideSpacing = qBound(4, qRound(static_cast<double>(petReferenceSide) * 0.015), 10);
 
     QPoint position(
-        petGeometry.right() + PanelSideSpacing,
+        petGeometry.right() + 1 + panelSideSpacing,
         petGeometry.center().y() - panelSize.height() / 2);
 
     if (QScreen *screen = screenForPopup(this))
     {
         const QRect availableGeometry = screen->availableGeometry();
-        const int maxX = qMax(availableGeometry.left(), availableGeometry.right() - panelSize.width());
-        const int maxY = qMax(availableGeometry.top(), availableGeometry.bottom() - panelSize.height());
+        const int maxX = qMax(availableGeometry.left(), availableGeometry.right() - panelSize.width() + 1);
+        const int maxY = qMax(availableGeometry.top(), availableGeometry.bottom() - panelSize.height() + 1);
         if (position.x() > maxX)
         {
-            position.setX(petGeometry.left() - panelSize.width() - PanelSideSpacing);
+            position.setX(petGeometry.left() - panelSize.width() - panelSideSpacing);
         }
 
         position.setX(qBound(
@@ -1648,7 +1359,8 @@ void PetWindow::cancelActiveAIRequest()
 
 bool PetWindow::hasActiveAIRequest() const
 {
-    return (m_conversationManager && m_conversationManager->isBusy()) || hasActiveWebRequest();
+    return (m_conversationManager && m_conversationManager->isBusy())
+        || hasActiveWebRequest();
 }
 
 bool PetWindow::isManualStateSwitchLocked() const
@@ -2041,6 +1753,33 @@ QPoint PetWindow::bubbleAnchorPosition() const
         static_cast<double>(height()) * base.anchorY + bubble.offsetY * scaleY);
 
     return frameGeometry().topLeft() + QPoint(qRound(localAnchor.x()), qRound(localAnchor.y()));
+}
+
+QRect PetWindow::visiblePetGeometry() const
+{
+    if (m_petView == nullptr)
+    {
+        return frameGeometry();
+    }
+
+    const QPixmap pixmap = m_petView->pixmap();
+    if (pixmap.isNull())
+    {
+        return frameGeometry();
+    }
+
+    if (m_visiblePetRectPixmapKey != pixmap.cacheKey())
+    {
+        m_visiblePetRectPixmapKey = pixmap.cacheKey();
+        m_visiblePetRectCache = visiblePixmapRect(pixmap);
+    }
+
+    if (!m_visiblePetRectCache.isValid())
+    {
+        return frameGeometry();
+    }
+
+    return m_visiblePetRectCache.translated(frameGeometry().topLeft());
 }
 
 void PetWindow::playState(const QString &stateName, bool centerWindow)

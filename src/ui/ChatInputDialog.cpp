@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTextEdit>
 
 #include <utility>
@@ -106,6 +107,12 @@ ChatInputDialog::ChatInputDialog(int maxLength, QWidget *parent)
     connect(m_textEdit, &QTextEdit::textChanged, this, [this]() {
         updateCounter();
     });
+    connect(m_webToggleCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_webToggleChangedCallback)
+        {
+            m_webToggleChangedCallback(checked);
+        }
+    });
 
     auto *panel = new QFrame(this);
     panel->setObjectName(QStringLiteral("InputPanel"));
@@ -143,6 +150,7 @@ void ChatInputDialog::setWebEnabled(bool enabled)
 {
     if (m_webToggleCheckBox)
     {
+        const QSignalBlocker blocker(m_webToggleCheckBox);
         m_webToggleCheckBox->setChecked(enabled);
     }
 }
@@ -154,6 +162,7 @@ void ChatInputDialog::setWebToggleAvailable(bool available, const QString &toolT
         return;
     }
 
+    const QSignalBlocker blocker(m_webToggleCheckBox);
     m_webToggleCheckBox->setEnabled(available);
     if (!available)
     {
@@ -167,6 +176,11 @@ void ChatInputDialog::setWebToggleAvailable(bool available, const QString &toolT
 void ChatInputDialog::setSubmitCallback(SubmitCallback callback)
 {
     m_submitCallback = std::move(callback);
+}
+
+void ChatInputDialog::setWebToggleChangedCallback(WebToggleChangedCallback callback)
+{
+    m_webToggleChangedCallback = std::move(callback);
 }
 
 void ChatInputDialog::showAt(const QPoint &anchorPosition)

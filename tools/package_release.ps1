@@ -4,6 +4,7 @@ param(
     [string]$Version = "",
     [string]$OutputRoot = "dist",
     [string]$WindeployQtPath = "",
+    [string]$MsvcRuntimeDir = "",
     [switch]$NoZip,
     [switch]$BuildInstaller,
     [string]$InnoCompilerPath = "",
@@ -44,7 +45,7 @@ function Read-ProjectVersion {
         return $match.Groups[1].Value
     }
 
-    return "0.1.0"
+    return "0.2.0"
 }
 
 function Resolve-WindeployQt {
@@ -67,6 +68,95 @@ function Resolve-WindeployQt {
     }
 
     throw "windeployqt.exe was not found. Add the Qt bin directory to PATH or pass -WindeployQtPath."
+}
+
+function Test-MsvcRuntimeDirectory {
+    param(
+        [string]$Directory
+    )
+
+    $requiredFiles = @(
+        "msvcp140.dll",
+        "msvcp140_1.dll",
+        "msvcp140_2.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll"
+    )
+    foreach ($fileName in $requiredFiles) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Directory $fileName) -PathType Leaf)) {
+            return $false
+        }
+    }
+
+    return $true
+}
+
+function Resolve-MsvcRuntimeDirectory {
+    param(
+        [string]$ExplicitPath
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        $resolved = Resolve-FullPath -Path $ExplicitPath -BasePath (Get-Location)
+        if ((Test-Path -LiteralPath $resolved -PathType Container) -and
+            (Test-MsvcRuntimeDirectory -Directory $resolved)) {
+            return $resolved
+        }
+
+        throw "The x64 MSVC runtime directory is incomplete: $resolved"
+    }
+
+    $x64Roots = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:VCToolsRedistDir)) {
+        $x64Roots += Join-Path $env:VCToolsRedistDir "x64"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:VCINSTALLDIR)) {
+        $redistRoot = Join-Path $env:VCINSTALLDIR "Redist\MSVC"
+        if (Test-Path -LiteralPath $redistRoot -PathType Container) {
+            $versionDirectories = Get-ChildItem -LiteralPath $redistRoot -Directory |
+                Sort-Object Name -Descending
+            foreach ($versionDirectory in $versionDirectories) {
+                $x64Roots += Join-Path $versionDirectory.FullName "x64"
+            }
+        }
+    }
+
+    foreach ($x64Root in $x64Roots) {
+        if (-not (Test-Path -LiteralPath $x64Root -PathType Container)) {
+            continue
+        }
+
+        $runtimeDirectories = Get-ChildItem -LiteralPath $x64Root -Directory -Filter "Microsoft.VC*.CRT" |
+            Sort-Object Name -Descending
+        foreach ($runtimeDirectory in $runtimeDirectories) {
+            if (Test-MsvcRuntimeDirectory -Directory $runtimeDirectory.FullName) {
+                return $runtimeDirectory.FullName
+            }
+        }
+    }
+
+    throw "The x64 MSVC runtime was not found. Run from a Visual Studio developer shell or pass -MsvcRuntimeDir."
+}
+
+function Copy-MsvcRuntime {
+    param(
+        [string]$SourceDirectory,
+        [string]$DestinationDirectory
+    )
+
+    $runtimeFiles = @(Get-ChildItem -LiteralPath $SourceDirectory -File -Filter "*.dll")
+    if ($runtimeFiles.Count -eq 0) {
+        throw "No MSVC runtime DLLs were found in: $SourceDirectory"
+    }
+
+    foreach ($runtimeFile in $runtimeFiles) {
+        Copy-Item -LiteralPath $runtimeFile.FullName -Destination $DestinationDirectory -Force
+    }
+
+    if (-not (Test-MsvcRuntimeDirectory -Directory $DestinationDirectory)) {
+        throw "MSVC runtime deployment validation failed: $DestinationDirectory"
+    }
 }
 
 function Resolve-InnoCompiler {
@@ -203,6 +293,12 @@ Assert-RequiredPath -Path $licensePath -Description "LICENSE"
 Assert-RequiredPath -Path $readmePath -Description "README.md"
 
 $windeployQt = Resolve-WindeployQt -ExplicitPath $WindeployQtPath
+$isMsvcDeployment = (-not [string]::IsNullOrWhiteSpace($MsvcRuntimeDir)) -or
+    ($windeployQt -match '(?i)[\\/]msvc[^\\/]*[\\/]bin[\\/]windeployqt\.exe$')
+$resolvedMsvcRuntimeDir = ""
+if ($isMsvcDeployment) {
+    $resolvedMsvcRuntimeDir = Resolve-MsvcRuntimeDirectory -ExplicitPath $MsvcRuntimeDir
+}
 Assert-ChildPath -Path $packageRoot -ParentPath $resolvedOutputRoot -Description "Release package directory"
 
 if (Test-Path -LiteralPath $packageRoot) {
@@ -218,7 +314,19 @@ Copy-Item -LiteralPath $licensePath -Destination (Join-Path $packageRoot "LICENS
 Copy-Item -LiteralPath $readmePath -Destination (Join-Path $packageRoot "README.md") -Force
 
 Write-Host "Running windeployqt: $windeployQt"
-Invoke-CheckedProcess -FilePath $windeployQt -Arguments @("--release", "--compiler-runtime", $targetExePath)
+$windeployArguments = @("--release")
+if ($isMsvcDeployment) {
+    $windeployArguments += "--no-compiler-runtime"
+} else {
+    $windeployArguments += "--compiler-runtime"
+}
+$windeployArguments += $targetExePath
+Invoke-CheckedProcess -FilePath $windeployQt -Arguments $windeployArguments
+
+if ($isMsvcDeployment) {
+    Write-Host "Deploying app-local MSVC runtime: $resolvedMsvcRuntimeDir"
+    Copy-MsvcRuntime -SourceDirectory $resolvedMsvcRuntimeDir -DestinationDirectory $packageRoot
+}
 
 $manifestPath = Join-Path $packageRoot "package_manifest.txt"
 @(
@@ -226,7 +334,7 @@ $manifestPath = Join-Path $packageRoot "package_manifest.txt"
     "Version: $Version",
     "CreatedUtc: $((Get-Date).ToUniversalTime().ToString("o"))",
     "SourceExe: $resolvedExePath",
-    "Includes: QtDesktopPet.exe, Qt runtime, character/icon/sound resources, LICENSE, README.md",
+    "Includes: QtDesktopPet.exe, Qt/compiler runtime, character/icon/sound resources, LICENSE, README.md",
     "Excludes: tools, docs, reports, build, dist, .git"
 ) | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 

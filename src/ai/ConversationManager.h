@@ -27,7 +27,6 @@ public:
     bool setProvider(std::unique_ptr<LLMProvider> provider);
     ChatRequest buildRequestForUserMessage(const QString &message) const;
     void appendExternalExchange(const QString &userMessage, const QString &assistantMessage);
-    void sendUserMessage(const QString &message, ResponseCallback callback);
     void sendUserMessageStreaming(const QString &message, StreamCallback streamCallback, ResponseCallback callback);
     void cancel();
     void clear();

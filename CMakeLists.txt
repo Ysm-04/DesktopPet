@@ -1,14 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(QtDesktopPet VERSION 0.1.0 LANGUAGES CXX)
+project(QtDesktopPet VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_AUTOMOC OFF)
-set(CMAKE_AUTORCC ON)
-set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Multimedia)
 
@@ -50,20 +48,6 @@ qt_add_executable(QtDesktopPet
     src/config/ConfigManager.cpp
     src/config/SecretStore.h
     src/config/SecretStore.cpp
-    src/fileops/FileBackupManager.h
-    src/fileops/FileBackupManager.cpp
-    src/fileops/FileOperationManager.h
-    src/fileops/FileOperationManager.cpp
-    src/fileops/FileOperationTypes.h
-    src/fileops/FileSandbox.h
-    src/fileops/FileSandbox.cpp
-    src/launcher/AppDiscovery.h
-    src/launcher/AppDiscovery.cpp
-    src/launcher/AppLaunchManager.h
-    src/launcher/AppLaunchManager.cpp
-    src/launcher/AppLaunchStore.h
-    src/launcher/AppLaunchStore.cpp
-    src/launcher/AppLaunchTypes.h
     src/notification/NotificationDispatcher.h
     src/notification/NotificationDispatcher.cpp
     src/reminder/ReminderCommandHandler.h
@@ -105,6 +89,8 @@ qt_add_executable(QtDesktopPet
     src/weather/WeatherConfig.h
     src/weather/WeatherManager.h
     src/weather/WeatherManager.cpp
+    src/weather/WeatherLocationResolver.h
+    src/weather/WeatherLocationResolver.cpp
     src/weather/WeatherParser.h
     src/weather/WeatherParser.cpp
     src/weather/WeatherStore.h

@@ -1,11 +1,11 @@
 #include "ChatBubble.h"
 
-#include <QApplication>
 #include <QEvent>
 #include <QFrame>
 #include <QRect>
 #include <QScrollBar>
 #include <QSize>
+#include <QTextEdit>
 #include <QTextDocument>
 #include <QVBoxLayout>
 #include <QtGlobal>
@@ -48,7 +48,6 @@ ChatBubble::ChatBubble(QWidget *parent)
     m_textEdit->installEventFilter(this);
     m_textEdit->viewport()->installEventFilter(this);
     m_textEdit->verticalScrollBar()->installEventFilter(this);
-    qApp->installEventFilter(this);
     m_textEdit->setStyleSheet(QStringLiteral(
         "QTextEdit {"
         "background: rgba(255, 255, 255, 232);"
@@ -80,17 +79,8 @@ ChatBubble::ChatBubble(QWidget *parent)
     });
 }
 
-ChatBubble::~ChatBubble()
-{
-    if (qApp != nullptr)
-    {
-        qApp->removeEventFilter(this);
-    }
-}
-
 void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs, bool scrollToBottom)
 {
-    m_dismissOnExternalInteraction = false;
     m_anchorPosition = anchorPosition;
     m_autoHideDurationMs = durationMs;
     const QString trimmed = message.trimmed();
@@ -129,11 +119,6 @@ void ChatBubble::updateAnchorPosition(const QPoint &anchorPosition)
     }
 }
 
-void ChatBubble::setDismissOnExternalInteraction(bool enabled)
-{
-    m_dismissOnExternalInteraction = enabled;
-}
-
 void ChatBubble::resetAutoHideTimer()
 {
     if (isVisible() && m_autoHideDurationMs > 0)
@@ -150,18 +135,6 @@ void ChatBubble::hideBubble()
 
 bool ChatBubble::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == qApp && m_dismissOnExternalInteraction && event->type() == QEvent::ApplicationDeactivate)
-    {
-        hideBubble();
-        return false;
-    }
-
-    if (m_dismissOnExternalInteraction && event->type() == QEvent::MouseButtonPress && !isOwnObject(watched))
-    {
-        hideBubble();
-        return false;
-    }
-
     if ((watched == m_textEdit || watched == m_textEdit->viewport() || watched == m_textEdit->verticalScrollBar())
         && isUserInteractionEvent(event))
     {
@@ -169,21 +142,6 @@ bool ChatBubble::eventFilter(QObject *watched, QEvent *event)
     }
 
     return QWidget::eventFilter(watched, event);
-}
-
-bool ChatBubble::isOwnObject(QObject *object) const
-{
-    while (object != nullptr)
-    {
-        if (object == this || object == m_textEdit || object == m_textEdit->viewport() || object == m_textEdit->verticalScrollBar())
-        {
-            return true;
-        }
-
-        object = object->parent();
-    }
-
-    return false;
 }
 
 bool ChatBubble::isUserInteractionEvent(QEvent *event) const

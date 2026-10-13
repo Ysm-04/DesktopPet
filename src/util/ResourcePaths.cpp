@@ -27,17 +27,6 @@ QString sourceResourcesRootPath()
 }
 }
 
-QString ResourcePaths::resourcesRootPath()
-{
-    const QString appResources = appResourcesRootPath();
-    if (QFileInfo::exists(appResources))
-    {
-        return appResources;
-    }
-
-    return sourceResourcesRootPath();
-}
-
 QString ResourcePaths::resourcePath(const QString &relativePath)
 {
     const QString cleanedRelativePath = cleanRelativePath(relativePath);
@@ -63,9 +52,4 @@ QString ResourcePaths::reminderSoundsRootPath()
 QString ResourcePaths::appIconPath()
 {
     return resourcePath(QStringLiteral("icons/app_icon.ico"));
-}
-
-QString ResourcePaths::appIconSourcePngPath()
-{
-    return resourcePath(QStringLiteral("icons/app_icon_1024.png"));
 }

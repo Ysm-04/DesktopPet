@@ -64,8 +64,8 @@ QString ambiguityPrefix(const WeatherReport &report)
     }
 
     QStringList otherCandidates;
-    const int maxOtherCandidateCount = qMin(3, report.locationCandidates.size() - 1);
-    for (int index = 1; index <= maxOtherCandidateCount; ++index)
+    const qsizetype candidateLimit = qMin<qsizetype>(4, report.locationCandidates.size());
+    for (qsizetype index = 1; index < candidateLimit; ++index)
     {
         otherCandidates.append(candidateDisplayName(report.locationCandidates.at(index)));
     }
@@ -76,7 +76,8 @@ QString ambiguityPrefix(const WeatherReport &report)
     }
 
     return QStringLiteral("可能存在同名城市，当前使用：%1。其他候选包括：%2。\n")
-        .arg(locationDisplayName(report.location), otherCandidates.join(QStringLiteral("；")));
+        .arg(locationDisplayName(report.location))
+        .arg(otherCandidates.join(QStringLiteral("；")));
 }
 
 QString temperatureText(double value)

@@ -4,7 +4,6 @@
 #include "../ai/LLMTypes.h"
 #include "../character/CharacterPackageRepository.h"
 #include "../config/SecretStore.h"
-#include "../launcher/AppLaunchManager.h"
 #include "../reminder/ReminderSoundRepository.h"
 #include "../web/WebCapabilityDetector.h"
 #include "../web/WebChatManager.h"
@@ -21,7 +20,6 @@
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
-#include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QList>
@@ -223,44 +221,6 @@ QString webCapabilityDisplayText(const WebCapability &capability)
 {
     const QString state = capability.supported ? QStringLiteral("可用") : QStringLiteral("不可用");
     return QStringLiteral("当前联网能力：%1。%2").arg(state, capability.userMessage);
-}
-
-QString launchAppDisplayText(const RegisteredApp &app)
-{
-    QStringList lines;
-    lines.append(app.displayName);
-    if (!app.aliases.isEmpty())
-    {
-        lines.append(QStringLiteral("别名：%1").arg(app.aliases.join(QStringLiteral(" / "))));
-    }
-    if (!app.executablePath.trimmed().isEmpty())
-    {
-        lines.append(QStringLiteral("路径：%1").arg(app.executablePath));
-    }
-    else if (!app.shortcutPath.trimmed().isEmpty())
-    {
-        lines.append(QStringLiteral("快捷方式：%1").arg(app.shortcutPath));
-    }
-    return lines.join(QLatin1Char('\n'));
-}
-
-QStringList aliasesFromUserText(const QString &text)
-{
-    QString normalized = text;
-    normalized.replace(QStringLiteral("，"), QStringLiteral(","));
-    normalized.replace(QStringLiteral("；"), QStringLiteral(","));
-    normalized.replace(QStringLiteral(";"), QStringLiteral(","));
-
-    QStringList aliases;
-    for (const QString &part : normalized.split(QLatin1Char(','), Qt::SkipEmptyParts))
-    {
-        const QString alias = part.trimmed();
-        if (!alias.isEmpty() && !aliases.contains(alias, Qt::CaseInsensitive))
-        {
-            aliases.append(alias);
-        }
-    }
-    return aliases;
 }
 
 QString chatRoleDisplayText(const QString &role)
@@ -514,7 +474,6 @@ SettingsDialog::SettingsDialog(
     const AppConfig &appConfig,
     const WeatherConfig &weatherConfig,
     const WebConfig &webConfig,
-    const AppLaunchConfig &appLaunchConfig,
     const QVector<ChatMessage> &conversationHistory,
     const QVector<ReminderItem> &reminders,
     std::function<bool()> aiTestBlocked,
@@ -567,14 +526,6 @@ SettingsDialog::SettingsDialog(
     , m_webShowCitationsCheckBox(new QCheckBox(QStringLiteral("显示来源引用"), this))
     , m_testWebButton(new QPushButton(QStringLiteral("测试联网模式"), this))
     , m_webStatusLabel(new QLabel(this))
-    , m_launchEnabledCheckBox(new QCheckBox(QStringLiteral("启用应用启动"), this))
-    , m_launchManualSelectionCheckBox(new QCheckBox(QStringLiteral("未知应用允许手选 exe"), this))
-    , m_launchAppListWidget(new QListWidget(this))
-    , m_addLaunchAppButton(new QPushButton(QStringLiteral("添加应用"), this))
-    , m_editLaunchAppButton(new QPushButton(QStringLiteral("编辑选中"), this))
-    , m_deleteLaunchAppButton(new QPushButton(QStringLiteral("删除选中"), this))
-    , m_testLaunchAppButton(new QPushButton(QStringLiteral("测试启动"), this))
-    , m_launchStatusLabel(new QLabel(this))
     , m_characterComboBox(new QComboBox(this))
     , m_importCharacterButton(new QPushButton(QStringLiteral("导入角色文件夹"), this))
     , m_deleteCharacterButton(new QPushButton(QStringLiteral("删除角色"), this))
@@ -598,7 +549,6 @@ SettingsDialog::SettingsDialog(
     , m_appConfig(appConfig)
     , m_weatherConfig(weatherConfig)
     , m_webConfig(webConfig)
-    , m_appLaunchConfig(appLaunchConfig)
     , m_conversationHistory(conversationHistory)
     , m_reminders(reminders)
     , m_aiTestBlocked(std::move(aiTestBlocked))
@@ -607,7 +557,6 @@ SettingsDialog::SettingsDialog(
     , m_updateReminder(std::move(updateReminderCallback))
     , m_clearFinishedReminders(std::move(clearFinishedRemindersCallback))
     , m_playReminderSound(std::move(playReminderSoundCallback))
-    , m_launchTestManager(std::make_unique<AppLaunchManager>())
     , m_webTestManager(std::make_unique<WebChatManager>())
     , m_weatherTestManager(std::make_unique<WeatherManager>())
 {
@@ -930,50 +879,6 @@ SettingsDialog::SettingsDialog(
     auto *webPage = new QWidget(this);
     webPage->setLayout(webPageLayout);
 
-    m_launchStatusLabel->setObjectName(QStringLiteral("HintLabel"));
-    m_launchStatusLabel->setWordWrap(true);
-    m_launchStatusLabel->setText(QStringLiteral("应用启动只支持 .exe 和开始菜单快捷方式；不执行脚本、命令、安装包，也不会拼接聊天文本参数。"));
-    m_launchEnabledCheckBox->setChecked(m_appLaunchConfig.enabled);
-    m_launchManualSelectionCheckBox->setChecked(m_appLaunchConfig.allowManualExeSelection);
-    m_launchAppListWidget->setObjectName(QStringLiteral("LaunchAppList"));
-    m_launchAppListWidget->setFrameShape(QFrame::NoFrame);
-    m_launchAppListWidget->setMinimumHeight(150);
-    m_launchAppListWidget->setSelectionMode(QAbstractItemView::SingleSelection);
-    reloadLaunchAppList();
-
-    auto *launchTitleLabel = new QLabel(QStringLiteral("应用启动"), this);
-    launchTitleLabel->setObjectName(QStringLiteral("PageTitle"));
-    auto *launchHintLabel = new QLabel(QStringLiteral("通过聊天输入“打开 Codex / 启动酷狗音乐”等触发。未知应用可手选 exe，启动前始终二次确认。"), this);
-    launchHintLabel->setObjectName(QStringLiteral("HintLabel"));
-    launchHintLabel->setWordWrap(true);
-
-    auto *launchFormLayout = new QFormLayout();
-    launchFormLayout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
-    launchFormLayout->setLabelAlignment(Qt::AlignRight);
-    launchFormLayout->setHorizontalSpacing(18);
-    launchFormLayout->setVerticalSpacing(12);
-    launchFormLayout->addRow(QString(), m_launchEnabledCheckBox);
-    launchFormLayout->addRow(QString(), m_launchManualSelectionCheckBox);
-
-    auto *launchActionLayout = new QHBoxLayout();
-    launchActionLayout->addWidget(m_addLaunchAppButton);
-    launchActionLayout->addWidget(m_editLaunchAppButton);
-    launchActionLayout->addWidget(m_deleteLaunchAppButton);
-    launchActionLayout->addWidget(m_testLaunchAppButton);
-    launchActionLayout->addWidget(m_launchStatusLabel, 1);
-
-    auto *launchPageLayout = new QVBoxLayout();
-    launchPageLayout->setContentsMargins(24, 24, 24, 24);
-    launchPageLayout->setSpacing(16);
-    launchPageLayout->addWidget(launchTitleLabel);
-    launchPageLayout->addWidget(launchHintLabel);
-    launchPageLayout->addLayout(launchFormLayout);
-    launchPageLayout->addWidget(m_launchAppListWidget);
-    launchPageLayout->addLayout(launchActionLayout);
-    launchPageLayout->addStretch();
-
-    auto *launchPage = new QWidget(this);
-    launchPage->setLayout(launchPageLayout);
 
     m_reminderStatusLabel->setObjectName(QStringLiteral("HintLabel"));
     m_reminderStatusLabel->setWordWrap(true);
@@ -1090,7 +995,6 @@ SettingsDialog::SettingsDialog(
     navigationList->addItem(QStringLiteral("聊天"));
     navigationList->addItem(QStringLiteral("天气"));
     navigationList->addItem(QStringLiteral("联网"));
-    navigationList->addItem(QStringLiteral("应用启动"));
     navigationList->addItem(QStringLiteral("提醒"));
     navigationList->addItem(QStringLiteral("应用"));
     navigationList->addItem(QStringLiteral("角色"));
@@ -1101,7 +1005,6 @@ SettingsDialog::SettingsDialog(
     pageStack->addWidget(chatPage);
     pageStack->addWidget(weatherPage);
     pageStack->addWidget(webPage);
-    pageStack->addWidget(launchPage);
     pageStack->addWidget(reminderPage);
     pageStack->addWidget(appPage);
     pageStack->addWidget(characterPage);
@@ -1153,20 +1056,10 @@ SettingsDialog::SettingsDialog(
         "  background: #ffffff; border: 1px solid #98a2b3; border-radius: 0px;"
         "  padding: 0px;"
         "}"
-        "QListWidget#LaunchAppList {"
-        "  background: #ffffff; border: 1px solid #98a2b3; border-radius: 0px;"
-        "  padding: 0px;"
-        "}"
         "QListWidget#ReminderList::item {"
         "  min-height: 28px; padding: 5px 8px; color: #344054;"
         "}"
-        "QListWidget#LaunchAppList::item {"
-        "  min-height: 34px; padding: 6px 8px; color: #344054;"
-        "}"
         "QListWidget#ReminderList::item:selected {"
-        "  background: #eaf3ff; color: #175cd3;"
-        "}"
-        "QListWidget#LaunchAppList::item:selected {"
         "  background: #eaf3ff; color: #175cd3;"
         "}"
         "QStackedWidget#SettingsPages {"
@@ -1226,21 +1119,6 @@ SettingsDialog::SettingsDialog(
     connect(m_testWebButton, &QPushButton::clicked, this, [this]() {
         testWebMode();
     });
-    connect(m_launchAppListWidget, &QListWidget::currentItemChanged, this, [this]() {
-        updateLaunchAppButtons();
-    });
-    connect(m_addLaunchAppButton, &QPushButton::clicked, this, [this]() {
-        addLaunchApp();
-    });
-    connect(m_editLaunchAppButton, &QPushButton::clicked, this, [this]() {
-        editSelectedLaunchApp();
-    });
-    connect(m_deleteLaunchAppButton, &QPushButton::clicked, this, [this]() {
-        deleteSelectedLaunchApp();
-    });
-    connect(m_testLaunchAppButton, &QPushButton::clicked, this, [this]() {
-        testSelectedLaunchApp();
-    });
     connect(m_importCharacterButton, &QPushButton::clicked, this, [this]() {
         importCharacterFolder();
     });
@@ -1282,7 +1160,6 @@ SettingsDialog::SettingsDialog(
     });
     updateReminderActionButtons();
     updateReminderSoundButtons();
-    updateLaunchAppButtons();
     refreshWebCapabilityStatus();
 }
 
@@ -1377,15 +1254,6 @@ WebConfig SettingsDialog::webConfig() const
     }
     config.timeoutMs = qBound(3000, m_webTimeoutSpinBox->value(), 120000);
     config.showCitations = m_webShowCitationsCheckBox->isChecked();
-    return config;
-}
-
-AppLaunchConfig SettingsDialog::appLaunchConfig() const
-{
-    AppLaunchConfig config = m_appLaunchConfig;
-    config.enabled = m_launchEnabledCheckBox->isChecked();
-    config.allowManualExeSelection = m_launchManualSelectionCheckBox->isChecked();
-    config.alwaysConfirmBeforeLaunch = true;
     return config;
 }
 
@@ -1508,233 +1376,6 @@ void SettingsDialog::testWebMode()
     });
 }
 
-void SettingsDialog::reloadLaunchAppList()
-{
-    m_launchAppListWidget->clear();
-    for (const RegisteredApp &app : m_appLaunchConfig.apps)
-    {
-        auto *item = new QListWidgetItem(launchAppDisplayText(app));
-        item->setData(Qt::UserRole, app.id);
-        item->setToolTip(launchAppDisplayText(app));
-        m_launchAppListWidget->addItem(item);
-    }
-    updateLaunchAppButtons();
-}
-
-void SettingsDialog::updateLaunchAppButtons()
-{
-    const bool hasSelection = !selectedLaunchAppId().isEmpty();
-    m_editLaunchAppButton->setEnabled(hasSelection);
-    m_deleteLaunchAppButton->setEnabled(hasSelection);
-    m_testLaunchAppButton->setEnabled(hasSelection);
-}
-
-QString SettingsDialog::selectedLaunchAppId() const
-{
-    const QListWidgetItem *item = m_launchAppListWidget->currentItem();
-    return item == nullptr ? QString() : item->data(Qt::UserRole).toString();
-}
-
-void SettingsDialog::addLaunchApp()
-{
-    const QString executablePath = QFileDialog::getOpenFileName(
-        this,
-        QStringLiteral("选择要登记的应用"),
-        QString(),
-        QStringLiteral("Applications (*.exe)"));
-    if (executablePath.isEmpty())
-    {
-        return;
-    }
-
-    const QFileInfo info(executablePath);
-    if (info.suffix().compare(QStringLiteral("exe"), Qt::CaseInsensitive) != 0)
-    {
-        QMessageBox::warning(this, QStringLiteral("不能添加"), QStringLiteral("应用启动只允许登记 .exe。"));
-        return;
-    }
-
-    bool ok = false;
-    const QString displayName = QInputDialog::getText(
-        this,
-        QStringLiteral("应用名称"),
-        QStringLiteral("显示名称"),
-        QLineEdit::Normal,
-        info.completeBaseName(),
-        &ok).trimmed();
-    if (!ok || displayName.isEmpty())
-    {
-        return;
-    }
-
-    const QString aliasText = QInputDialog::getText(
-        this,
-        QStringLiteral("应用别名"),
-        QStringLiteral("别名，用逗号分隔"),
-        QLineEdit::Normal,
-        displayName,
-        &ok).trimmed();
-    if (!ok)
-    {
-        return;
-    }
-
-    AppLaunchPlan plan;
-    plan.requestedName = displayName;
-    plan.displayName = displayName;
-    plan.executablePath = info.absoluteFilePath();
-    plan.workingDirectory = info.absolutePath();
-    plan.matchSource = QStringLiteral("设置页登记");
-    RegisteredApp app = m_launchTestManager->registeredAppFromPlan(plan, aliasesFromUserText(aliasText));
-    app.userDefined = true;
-    const QString baseId = app.id;
-    int suffix = 2;
-    const auto idExists = [this](const QString &id) {
-        for (const RegisteredApp &existingApp : m_appLaunchConfig.apps)
-        {
-            if (existingApp.id == id)
-            {
-                return true;
-            }
-        }
-        return false;
-    };
-    while (idExists(app.id))
-    {
-        app.id = baseId + QStringLiteral("_") + QString::number(suffix++);
-    }
-    m_appLaunchConfig.apps.append(app);
-    reloadLaunchAppList();
-    m_launchStatusLabel->setText(QStringLiteral("已添加应用：%1。点击保存后生效。").arg(displayName));
-}
-
-void SettingsDialog::editSelectedLaunchApp()
-{
-    const QString appId = selectedLaunchAppId();
-    if (appId.isEmpty())
-    {
-        return;
-    }
-
-    for (RegisteredApp &app : m_appLaunchConfig.apps)
-    {
-        if (app.id != appId)
-        {
-            continue;
-        }
-
-        bool ok = false;
-        const QString displayName = QInputDialog::getText(
-            this,
-            QStringLiteral("编辑应用"),
-            QStringLiteral("显示名称"),
-            QLineEdit::Normal,
-            app.displayName,
-            &ok).trimmed();
-        if (!ok || displayName.isEmpty())
-        {
-            return;
-        }
-
-        const QString aliasText = QInputDialog::getText(
-            this,
-            QStringLiteral("编辑别名"),
-            QStringLiteral("别名，用逗号分隔"),
-            QLineEdit::Normal,
-            app.aliases.join(QStringLiteral(", ")),
-            &ok).trimmed();
-        if (!ok)
-        {
-            return;
-        }
-
-        app.displayName = displayName;
-        app.aliases = aliasesFromUserText(aliasText);
-        if (!app.aliases.contains(displayName, Qt::CaseInsensitive))
-        {
-            app.aliases.prepend(displayName);
-        }
-        reloadLaunchAppList();
-        m_launchStatusLabel->setText(QStringLiteral("已更新应用：%1。点击保存后生效。").arg(displayName));
-        return;
-    }
-}
-
-void SettingsDialog::deleteSelectedLaunchApp()
-{
-    const QString appId = selectedLaunchAppId();
-    if (appId.isEmpty())
-    {
-        return;
-    }
-
-    const int answer = QMessageBox::warning(
-        this,
-        QStringLiteral("删除登记应用"),
-        QStringLiteral("只会删除设置页中的应用登记，不会删除磁盘上的程序文件。是否继续？"),
-        QMessageBox::Yes | QMessageBox::Cancel,
-        QMessageBox::Cancel);
-    if (answer != QMessageBox::Yes)
-    {
-        return;
-    }
-
-    for (int index = 0; index < m_appLaunchConfig.apps.size(); ++index)
-    {
-        if (m_appLaunchConfig.apps.at(index).id == appId)
-        {
-            const QString name = m_appLaunchConfig.apps.at(index).displayName;
-            m_appLaunchConfig.apps.removeAt(index);
-            reloadLaunchAppList();
-            m_launchStatusLabel->setText(QStringLiteral("已删除登记：%1。点击保存后生效。").arg(name));
-            return;
-        }
-    }
-}
-
-void SettingsDialog::testSelectedLaunchApp()
-{
-    const QString appId = selectedLaunchAppId();
-    if (appId.isEmpty() || !m_launchTestManager)
-    {
-        return;
-    }
-
-    for (const RegisteredApp &app : m_appLaunchConfig.apps)
-    {
-        if (app.id != appId)
-        {
-            continue;
-        }
-
-        AppLaunchPlan plan;
-        plan.success = true;
-        plan.requestedName = app.displayName;
-        plan.displayName = app.displayName;
-        plan.executablePath = app.executablePath;
-        plan.shortcutPath = app.shortcutPath;
-        plan.workingDirectory = app.workingDirectory;
-        plan.matchSource = QStringLiteral("设置页测试");
-
-        const int answer = QMessageBox::warning(
-            this,
-            QStringLiteral("测试启动应用"),
-            QStringLiteral("即将启动：%1\n路径：%2\n\n是否继续？")
-                .arg(plan.displayName, plan.executablePath.isEmpty() ? plan.shortcutPath : plan.executablePath),
-            QMessageBox::Yes | QMessageBox::Cancel,
-            QMessageBox::Cancel);
-        if (answer != QMessageBox::Yes)
-        {
-            return;
-        }
-
-        const AppLaunchResult result = m_launchTestManager->executeLaunchPlan(plan);
-        m_launchStatusLabel->setText(result.success
-            ? result.message
-            : (result.errorMessage.isEmpty() ? QStringLiteral("测试启动失败。") : result.errorMessage));
-        return;
-    }
-}
 
 void SettingsDialog::accept()
 {
@@ -1930,7 +1571,6 @@ AIConfig SettingsDialog::runtimeConfigFromForm(const QString &provider) const
 
     config.stream = false;
     config.temperature = 0.0;
-    config.maxTokens = qMin(config.maxTokens, 16);
     return config;
 }
 

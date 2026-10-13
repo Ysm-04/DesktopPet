@@ -40,6 +40,7 @@ function Should-ExcludeDirectory([string]$RelativePath) {
         "dist",
         "release_packages",
         "docs",
+        "internal",
         "reports",
         "config",
         "logs"
@@ -133,6 +134,15 @@ if (Test-Path -LiteralPath $outputPath) {
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 Copy-PublicTree -SourceDir $repoRoot -DestinationDir $outputPath -RelativeDir ""
+
+foreach ($forbiddenRoot in @("docs", "internal", "reports")) {
+    if (Test-Path -LiteralPath (Join-Path $outputPath $forbiddenRoot)) {
+        throw "Public export isolation failed; forbidden directory was copied: $forbiddenRoot"
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $outputPath "README.dev.md")) {
+    throw "Public export isolation failed; README.dev.md was copied."
+}
 
 Write-Host "GitHub export prepared:"
 Write-Host "  $outputPath"

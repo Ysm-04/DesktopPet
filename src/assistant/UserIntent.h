@@ -7,8 +7,6 @@ enum class UserIntentType
     Chat,
     Reminder,
     Weather,
-    FileOperation,
-    LaunchApp,
 };
 
 struct UserIntent

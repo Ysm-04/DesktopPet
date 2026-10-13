@@ -10,6 +10,7 @@
 
 #include <QMap>
 #include <QPoint>
+#include <QRect>
 #include <QSet>
 #include <QStringList>
 #include <QTimer>
@@ -30,8 +31,6 @@ class ChatHistoryPanel;
 class ChatInputDialog;
 class ConversationManager;
 class ConversationStore;
-class FileOperationManager;
-class AppLaunchManager;
 class NotificationDispatcher;
 class PetView;
 class ReminderManager;
@@ -76,8 +75,6 @@ private:
     bool submitWebChatMessage(const QString &message);
     bool handleReminderChatMessage(const QString &message);
     bool handleWeatherChatMessage(const QString &message);
-    bool handleFileOperationChatMessage(const QString &message);
-    bool handleLaunchAppChatMessage(const QString &message);
     bool hasActiveWebRequest() const;
     QString formatWebChatResponseForDisplay(const WebChatResponse &response) const;
     void refreshChatInputWebToggle();
@@ -112,6 +109,7 @@ private:
     QPoint chatInputAnchorPosition() const;
     void updateBubblePosition();
     QPoint bubbleAnchorPosition() const;
+    QRect visiblePetGeometry() const;
     void playState(const QString &stateName, bool centerWindow);
     void playResolvedState(const QString &stateName, bool centerWindow);
     QSize animationTargetSize() const;
@@ -142,8 +140,6 @@ private:
     std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
     std::unique_ptr<ConversationStore> m_conversationStore;
-    std::unique_ptr<FileOperationManager> m_fileOperationManager;
-    std::unique_ptr<AppLaunchManager> m_appLaunchManager;
     std::unique_ptr<NotificationDispatcher> m_notificationDispatcher;
     std::unique_ptr<ReminderManager> m_reminderManager;
     std::unique_ptr<ReminderSoundPlayer> m_reminderSoundPlayer;
@@ -176,4 +172,6 @@ private:
     bool m_streamingTalkStarted = false;
     bool m_settingsFallbackInContextMenuEnabled = true;
     bool m_hasActiveTriggeredReminder = false;
+    mutable qint64 m_visiblePetRectPixmapKey = 0;
+    mutable QRect m_visiblePetRectCache;
 };

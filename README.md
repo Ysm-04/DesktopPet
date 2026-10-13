@@ -1,6 +1,6 @@
 # QtDesktopPet
 
-一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物项目。它提供透明桌宠窗口、PNG 序列帧动画、多状态切换、托盘控制、AI 对话、本地提醒、天气查询、简单文件操作和本地应用启动等能力。
+一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物项目。它提供透明桌宠窗口、PNG 序列帧动画、多状态切换、托盘控制、AI 对话、AI 原生联网、本地提醒和天气查询等能力。
 
 > 当前仓库仍处于活跃开发阶段。角色素材、图标和音效的再分发权限需要在正式公开发布前单独确认。
 
@@ -30,23 +30,15 @@
 - 天气查询：
   - Open-Meteo Forecast API
   - Open-Meteo Geocoding API
-  - 默认城市、公网 IP 定位兜底、多候选提示
-- 本地文件操作 v1：
-  - 读取文本文件
-  - 列出文件夹
-  - 复制、备份、重命名
-  - 写操作前二次确认
-- 应用启动 v1：
-  - 聊天触发打开本地应用
-  - 支持已登记应用、开始菜单快捷方式和用户手选 `.exe`
-  - 启动前二次确认
+  - 默认城市、可信同名候选提示，以及常用海外城市中文名解析
+  - 公网 IP 定位依次尝试 ipapi.co 和 ipwho.is，单个服务故障时自动切换
 - Windows 发布脚本和 Inno Setup 安装器脚本。
 
 ## Platform
 
 当前主要目标平台是 Windows 10 / Windows 11。
 
-项目中已有部分跨平台基础代码，但托盘通知、开机自启动、应用发现和安装器体验目前按 Windows 优先实现。
+项目中已有部分跨平台基础代码，但托盘通知、开机自启动和安装器体验目前按 Windows 优先实现。
 
 ## Tech Stack
 
@@ -75,8 +67,6 @@
 │   ├── assistant/             # Intent routing and command dispatch
 │   ├── character/             # Character package loading and animation
 │   ├── config/                # Config persistence
-│   ├── fileops/               # Local file operations
-│   ├── launcher/              # Local application launcher
 │   ├── notification/          # Notification dispatch
 │   ├── reminder/              # Reminder parser/store/scheduler/sounds
 │   ├── state/                 # Pet state machine
@@ -86,7 +76,7 @@
 │   ├── util/
 │   ├── weather/
 │   └── web/                   # AI-native web mode
-└── tools/                     # Packaging and diagnostic scripts
+└── tools/                     # Packaging and public-export scripts
 ```
 
 ## Build
@@ -129,6 +119,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/package_release.ps1 `
   -BuildInstaller
 ```
 
+For MSVC builds, run the package script from a Visual Studio developer shell or pass `-MsvcRuntimeDir`. The script deploys the x64 MSVC runtime beside the application and fails early when the required runtime files are unavailable.
+
 The installer supports optional desktop shortcut creation and optional Windows startup launch. Both are disabled by default.
 
 ## Runtime Data
@@ -146,7 +138,6 @@ Examples:
 - Reminders: `reminders.json`
 - Weather config: `weather_config.json`
 - Web mode config: `web_config.json`
-- Launcher config: `launcher_config.json`
 
 The app writes rotating logs under:
 
@@ -168,14 +159,10 @@ Important notes:
 
 ## Safety Boundaries
 
-The project intentionally keeps local automation conservative:
-
-- File operations require user-selected paths.
-- Write operations require confirmation.
-- File operations do not execute scripts or commands.
-- Application launch only supports `.exe` and Start Menu `.lnk` shortcuts.
-- Chat text is not converted into shell commands.
-- Startup integration writes only the current user's Windows `Run` entry.
+- The application does not read, search, create, modify, move, or delete local files through chat.
+- It does not launch local applications or convert chat text into shell commands or scripts.
+- Windows startup integration only manages this application's current-user `Run` entry.
+- AI and web requests are sent only to providers configured by the user.
 
 ## Web Mode
 

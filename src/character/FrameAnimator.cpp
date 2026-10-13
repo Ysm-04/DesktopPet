@@ -79,11 +79,6 @@ bool FrameAnimator::isPlaying() const
     return m_timer.isActive() && m_clip != nullptr;
 }
 
-bool FrameAnimator::isPaused() const
-{
-    return m_paused && m_clip != nullptr;
-}
-
 QString FrameAnimator::currentStateName() const
 {
     if (m_clip == nullptr)

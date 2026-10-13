@@ -1,6 +1,7 @@
 #pragma once
 
 #include "WeatherParser.h"
+#include "WeatherLocationResolver.h"
 #include "WeatherSummaryFormatter.h"
 #include "WeatherTypes.h"
 
@@ -32,11 +33,15 @@ public:
 private:
     void startGeocodingRequest(const QString &cityName, WeatherLocationSource source, bool locationTestOnly);
     void startIpLocationRequest();
+    void startNextIpLocationRequest();
     void startForecastRequest();
     void finishGeocodingRequest(QNetworkReply *reply);
-    void finishIpLocationRequest(QNetworkReply *reply);
+    void finishIpLocationRequest(QNetworkReply *reply, WeatherIpLocationProvider provider);
     void finishForecastRequest(QNetworkReply *reply);
-    void startRequest(const QUrl &url, std::function<void(QNetworkReply *)> finishedHandler);
+    void startRequest(
+        const QUrl &url,
+        std::function<void(QNetworkReply *)> finishedHandler,
+        int timeoutMs = -1);
     void finishGeocodingWithError(const QString &message);
     void finishWithError(const QString &message);
     void finishLocationTestWithError(const QString &message);
@@ -55,9 +60,12 @@ private:
     LocationTestCallback m_locationTestCallback;
     WeatherConfig m_config;
     WeatherQuery m_query;
+    WeatherLocationSearch m_locationSearch;
     WeatherLocation m_location;
     QVector<WeatherLocationCandidate> m_locationCandidates;
     bool m_locationTestOnly = false;
     bool m_hasLocationAmbiguity = false;
+    bool m_ipLocationAttemptActive = false;
+    int m_ipLocationProviderIndex = -1;
     bool m_busy = false;
 };

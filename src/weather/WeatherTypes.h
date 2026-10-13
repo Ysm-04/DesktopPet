@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QString>
 #include <QVector>
+#include <QtGlobal>
 
 enum class WeatherLocationSource
 {
@@ -21,6 +22,12 @@ enum class WeatherQueryKind
     Range,
 };
 
+enum class WeatherIpLocationProvider
+{
+    IpApiCo,
+    IpWhoIs,
+};
+
 struct WeatherQuery
 {
     QString originalText;
@@ -30,6 +37,13 @@ struct WeatherQuery
     int dateOffset = 0;
     int forecastDays = 1;
     QString unsupportedReason;
+};
+
+struct WeatherLocationSearch
+{
+    QString originalName;
+    QString queryName;
+    QString countryCode;
 };
 
 struct WeatherLocation
@@ -51,6 +65,9 @@ struct WeatherLocationCandidate
     QString timezone;
     double latitude = 0.0;
     double longitude = 0.0;
+    QString countryCode;
+    QString featureCode;
+    qint64 population = -1;
 };
 
 struct WeatherCurrent

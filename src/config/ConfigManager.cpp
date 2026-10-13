@@ -424,21 +424,6 @@ bool ConfigManager::saveAIConfigStore(const AIConfigStore &store) const
     return file.write(document.toJson(QJsonDocument::Indented)) >= 0;
 }
 
-bool ConfigManager::saveAIConfig(const AIConfig &config) const
-{
-    AIConfig normalizedConfig = config;
-    normalizedConfig.provider = normalizedProviderName(normalizedConfig.provider);
-    if (isRemovedProviderName(normalizedConfig.provider))
-    {
-        normalizedConfig = defaultAIConfigForProvider(QStringLiteral("custom"));
-    }
-
-    AIConfigStore store = loadAIConfigStore();
-    store.activeProvider = normalizedConfig.provider;
-    store.providers.insert(normalizedConfig.provider, normalizedConfig);
-    return saveAIConfigStore(store);
-}
-
 QString ConfigManager::appConfigPath() const
 {
     return QDir(configDirectoryPath()).filePath(AppConfigFileName);

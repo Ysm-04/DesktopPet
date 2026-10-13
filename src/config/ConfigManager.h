@@ -15,7 +15,6 @@ public:
     AIConfig loadAIConfig() const;
     bool saveAppConfig(const AppConfig &config) const;
     bool saveAIConfigStore(const AIConfigStore &store) const;
-    bool saveAIConfig(const AIConfig &config) const;
     QString appConfigPath() const;
     QString aiConfigPath() const;
     QString conversationHistoryPath() const;

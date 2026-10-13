@@ -9,9 +9,6 @@ enum class CommandDispatchAction
     Chat,
     Reminder,
     Weather,
-    FileOperation,
-    LaunchApp,
-    UnsupportedTool,
 };
 
 struct CommandDispatchResult
@@ -27,7 +24,5 @@ public:
     CommandDispatchResult dispatch(const QString &text) const;
 
 private:
-    QString unsupportedToolMessage(UserIntentType type) const;
-
     IntentRouter m_intentRouter;
 };

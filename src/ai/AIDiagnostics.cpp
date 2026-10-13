@@ -5,13 +5,33 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QRegularExpression>
 #include <QStringList>
 #include <QUrlQuery>
+#include <QVector>
 #include <QtGlobal>
 
 namespace
 {
 constexpr int MaxBodySummaryLength = 360;
+
+QString redactSensitiveText(QString text)
+{
+    static const QVector<QRegularExpression> credentialPatterns = {
+        QRegularExpression(QStringLiteral("\\bBearer\\s+[^\\s,;]+"), QRegularExpression::CaseInsensitiveOption),
+        QRegularExpression(QStringLiteral("\\bsk-[A-Za-z0-9_-]{8,}"), QRegularExpression::CaseInsensitiveOption),
+        QRegularExpression(QStringLiteral("\\bAIza[A-Za-z0-9_-]{20,}")),
+        QRegularExpression(
+            QStringLiteral("\\b(api[_-]?key|token|authorization|password|secret)\\s*[:=]\\s*[^\\s,;]+"),
+            QRegularExpression::CaseInsensitiveOption),
+    };
+
+    for (const QRegularExpression &pattern : credentialPatterns)
+    {
+        text.replace(pattern, QStringLiteral("<redacted>"));
+    }
+    return text;
+}
 
 bool isSensitiveName(const QString &name)
 {
@@ -96,7 +116,7 @@ QString oneLine(QString text)
     text.replace(QLatin1Char('\r'), QLatin1Char(' '));
     text.replace(QLatin1Char('\n'), QLatin1Char(' '));
     text.replace(QLatin1Char('\t'), QLatin1Char(' '));
-    return text.simplified();
+    return redactSensitiveText(text.simplified());
 }
 
 QString safeTextSummary(const QString &text, int maxLength)

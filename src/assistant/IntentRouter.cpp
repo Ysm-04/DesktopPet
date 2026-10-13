@@ -1,7 +1,6 @@
 #include "IntentRouter.h"
 
 #include <QStringList>
-#include <QtGlobal>
 
 namespace
 {
@@ -14,7 +13,6 @@ bool containsAny(const QString &text, const QStringList &keywords)
             return true;
         }
     }
-
     return false;
 }
 
@@ -26,29 +24,6 @@ bool isReminderIntent(const QString &text)
         QStringLiteral("叫我"),
         QStringLiteral("闹钟"),
         QStringLiteral("到点"),
-    };
-    return containsAny(text, keywords);
-}
-
-bool isFileOperationIntent(const QString &text)
-{
-    static const QStringList keywords = {
-        QStringLiteral("文件"),
-        QStringLiteral("文件夹"),
-        QStringLiteral("目录"),
-        QStringLiteral("保存到"),
-        QStringLiteral("截图"),
-        QStringLiteral("打包"),
-        QStringLiteral("压缩"),
-        QStringLiteral("复制"),
-        QStringLiteral("备份"),
-        QStringLiteral("重命名"),
-        QStringLiteral("删除"),
-        QStringLiteral("移动"),
-        QStringLiteral("读取"),
-        QStringLiteral(".txt"),
-        QStringLiteral(".md"),
-        QStringLiteral("日志"),
     };
     return containsAny(text, keywords);
 }
@@ -75,62 +50,18 @@ bool isWeatherIntent(const QString &text)
     };
     return containsAny(text, keywords);
 }
-
-bool isLaunchAppIntent(const QString &text)
-{
-    static const QStringList blockedFileKeywords = {
-        QStringLiteral("打开文件"),
-        QStringLiteral("打开文件夹"),
-        QStringLiteral("打开目录"),
-        QStringLiteral("读取文件"),
-        QStringLiteral("复制文件"),
-        QStringLiteral("备份文件"),
-        QStringLiteral("重命名文件"),
-        QStringLiteral("保存到"),
-        QStringLiteral("截图"),
-        QStringLiteral("打包"),
-        QStringLiteral("压缩"),
-        QStringLiteral("脚本"),
-        QStringLiteral("命令"),
-    };
-    if (containsAny(text, blockedFileKeywords))
-    {
-        return false;
-    }
-
-    static const QStringList keywords = {
-        QStringLiteral("打开"),
-        QStringLiteral("启动"),
-        QStringLiteral("运行"),
-        QStringLiteral("唤起"),
-    };
-    return containsAny(text, keywords);
-}
 }
 
 UserIntent IntentRouter::route(const QString &text) const
 {
     const QString trimmedText = text.trimmed();
-
     if (isReminderIntent(trimmedText))
     {
         return {UserIntentType::Reminder, trimmedText};
     }
-
-    if (isFileOperationIntent(trimmedText))
-    {
-        return {UserIntentType::FileOperation, trimmedText};
-    }
-
     if (isWeatherIntent(trimmedText))
     {
         return {UserIntentType::Weather, trimmedText};
     }
-
-    if (isLaunchAppIntent(trimmedText))
-    {
-        return {UserIntentType::LaunchApp, trimmedText};
-    }
-
     return {UserIntentType::Chat, trimmedText};
 }
