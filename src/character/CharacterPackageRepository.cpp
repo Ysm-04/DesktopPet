@@ -1,6 +1,9 @@
 #include "CharacterPackageRepository.h"
 
 #include "CharacterPackageLoader.h"
+#include "CharacterMediaSpec.h"
+#include "WebpAnimationBackend.h"
+#include "../config/ConfigManager.h"
 #include "../util/ResourcePaths.h"
 
 #include <QDateTime>
@@ -18,7 +21,6 @@
 
 namespace
 {
-constexpr int SupportedSchemaVersion = 1;
 
 bool setError(QString *errorMessage, const QString &message)
 {
@@ -41,22 +43,10 @@ QString fallbackUserDataPath()
     return QDir::currentPath();
 }
 
-bool isSafeRelativePath(QString path)
+QString effectivePersonaStorePath(const QString &overrideFilePath)
 {
-    path = path.trimmed();
-    path.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    if (path.isEmpty() || path.startsWith(QLatin1Char('/')) || QDir::isAbsolutePath(path))
-    {
-        return false;
-    }
-
-    const QString cleanedPath = QDir::cleanPath(path);
-    if (cleanedPath == QStringLiteral(".") || cleanedPath.startsWith(QStringLiteral("../")))
-    {
-        return false;
-    }
-
-    return !cleanedPath.split(QLatin1Char('/'), Qt::SkipEmptyParts).contains(QStringLiteral(".."));
+    const QString trimmed = overrideFilePath.trimmed();
+    return trimmed.isEmpty() ? ConfigManager().characterPersonasPath() : trimmed;
 }
 
 bool hasReadablePngFrame(const QStringList &framePaths)
@@ -129,9 +119,9 @@ bool copyDirectoryRecursively(const QString &sourcePath, const QString &targetPa
         QDir::Name);
     for (const QFileInfo &entry : entries)
     {
-        if (entry.isSymLink())
+        if (entry.isSymLink() || entry.isJunction())
         {
-            return setError(errorMessage, QStringLiteral("角色包中不允许包含符号链接：") + entry.fileName());
+            return setError(errorMessage, QStringLiteral("角色包中不允许包含符号链接或目录联接：") + entry.fileName());
         }
 
         const QString targetEntryPath = targetDirectory.filePath(entry.fileName());
@@ -197,6 +187,7 @@ bool replaceDirectoryWithPreparedImport(const QString &preparedPath, const QStri
 
 bool validateManifest(const QString &directoryPath, QString *characterId, QString *displayName, QString *errorMessage)
 {
+    if (!CharacterMediaSpec::preflightPackage(directoryPath, errorMessage)) return false;
     const QDir packageDirectory(directoryPath);
     if (!packageDirectory.exists())
     {
@@ -222,7 +213,7 @@ bool validateManifest(const QString &directoryPath, QString *characterId, QStrin
     }
 
     const QJsonObject root = document.object();
-    if (root.value(QStringLiteral("schemaVersion")).toInt(0) != SupportedSchemaVersion)
+    if (!CharacterMediaSpec::isSupportedSchema(root.value(QStringLiteral("schemaVersion"))))
     {
         return setError(errorMessage, QStringLiteral("schemaVersion 不受支持。"));
     }
@@ -282,47 +273,17 @@ bool validateManifest(const QString &directoryPath, QString *characterId, QStrin
             return setError(errorMessage, QStringLiteral("状态配置必须是对象：") + iterator.key());
         }
 
-        const QJsonObject state = iterator.value().toObject();
-        const QString relativePath = state.value(QStringLiteral("path")).toString().trimmed();
-        if (!isSafeRelativePath(relativePath))
+        CharacterState state;
+        if (!CharacterMediaSpec::parseState(root.value(QStringLiteral("schemaVersion")).toInt(),
+                                           iterator.key(), iterator.value().toObject(),
+                                           directoryPath, &state, errorMessage))
+            return false;
+        if (state.mediaType == QStringLiteral("webp"))
         {
-            return setError(errorMessage, QStringLiteral("状态路径非法：") + iterator.key());
+            if (!WebpAnimationBackend::validateFile(state.mediaPath, errorMessage)) return false;
         }
-
-        if (state.value(QStringLiteral("fps")).toInt(0) <= 0)
-        {
-            return setError(errorMessage, QStringLiteral("状态 fps 必须大于 0：") + iterator.key());
-        }
-
-        const QString stateDirectoryPath = packageDirectory.filePath(relativePath);
-        if (QFileInfo(stateDirectoryPath).isSymLink())
-        {
-            return setError(errorMessage, QStringLiteral("状态目录不允许是符号链接：") + iterator.key());
-        }
-
-        const QDir stateDirectory(stateDirectoryPath);
-        if (!stateDirectory.exists())
-        {
-            return setError(errorMessage, QStringLiteral("状态目录不存在：") + iterator.key());
-        }
-
-        const QFileInfoList frameFiles = stateDirectory.entryInfoList(
-            {QStringLiteral("*.png"), QStringLiteral("*.PNG")},
-            QDir::Files,
-            QDir::Name);
-        QStringList framePaths;
-        for (const QFileInfo &frameFile : frameFiles)
-        {
-            if (frameFile.isSymLink())
-            {
-                return setError(errorMessage, QStringLiteral("状态帧不允许是符号链接：") + iterator.key());
-            }
-            framePaths.append(frameFile.absoluteFilePath());
-        }
-        if (framePaths.isEmpty() || !hasReadablePngFrame(framePaths))
-        {
+        else if (state.mediaType == QStringLiteral("frames") && !hasReadablePngFrame(state.framePaths))
             return setError(errorMessage, QStringLiteral("状态没有可读 PNG 帧：") + iterator.key());
-        }
 
         validStates.insert(iterator.key());
     }
@@ -341,6 +302,13 @@ bool validateManifest(const QString &directoryPath, QString *characterId, QStrin
     if (!loadError.isEmpty() || !package.hasState(QStringLiteral("idle")))
     {
         return setError(errorMessage, loadError.isEmpty() ? QStringLiteral("角色包无法被当前加载器读取。") : loadError);
+    }
+    if (!package.effects.closedFrame.isEmpty())
+    {
+        QImageReader closed(package.effects.closedFrame);
+        const QImage frame = closed.read();
+        if (frame.isNull())
+            return setError(errorMessage, QStringLiteral("闭眼 PNG 无法完整解码。"));
     }
 
     if (characterId != nullptr)
@@ -669,6 +637,19 @@ bool CharacterPackageRepository::exportPackageDirectory(
         return false;
     }
 
+    const ResolvedCharacterPersona resolvedPersona = resolveCharacterPersona(trimmed);
+    if (resolvedPersona.hasUserOverride && !resolvedPersona.persona.isEmpty())
+    {
+        if (!CharacterPersonaStore::updateManifestPersonaAtomic(
+                QDir(preparedPath).filePath(QStringLiteral("character.json")),
+                resolvedPersona.persona,
+                errorMessage))
+        {
+            QDir(preparedPath).removeRecursively();
+            return false;
+        }
+    }
+
     if (!replaceDirectoryWithPreparedImport(preparedPath, cleanedTargetPath, overwrite, errorMessage))
     {
         QDir(preparedPath).removeRecursively();
@@ -715,5 +696,101 @@ bool CharacterPackageRepository::deleteUserPackage(const QString &characterId, Q
         return setError(errorMessage, QStringLiteral("删除用户角色目录失败。"));
     }
 
+    if (!hasBuiltInPackage(trimmed))
+    {
+        const CharacterPersonaStore personaStore(effectivePersonaStorePath(QString()));
+        personaStore.removeOverride(trimmed);
+    }
+
     return true;
+}
+
+ResolvedCharacterPersona CharacterPackageRepository::resolveCharacterPersona(
+    const QString &characterId,
+    const QString &overrideFilePath)
+{
+    const QString trimmed = characterId.trimmed();
+    QString packagePersona;
+    if (isValidCharacterId(trimmed) && hasPackage(trimmed))
+    {
+        const QString path = packagePath(trimmed);
+        if (!path.isEmpty())
+        {
+            QString loadError;
+            const CharacterPackage package = CharacterPackageLoader::load(path, &loadError);
+            if (loadError.isEmpty())
+            {
+                packagePersona = package.persona;
+            }
+        }
+    }
+
+    const CharacterPersonaStore personaStore(effectivePersonaStorePath(overrideFilePath));
+    return personaStore.resolvePersona(trimmed, packagePersona);
+}
+
+bool CharacterPackageRepository::saveCharacterPersona(
+    const QString &characterId,
+    const QString &persona,
+    QString *errorMessage,
+    const QString &overrideFilePath)
+{
+    const QString trimmed = characterId.trimmed();
+    if (!isValidCharacterId(trimmed))
+    {
+        return setError(errorMessage, QStringLiteral("角色 id 无效。"));
+    }
+
+    const CharacterPersonaStore personaStore(effectivePersonaStorePath(overrideFilePath));
+    if (hasUserPackage(trimmed))
+    {
+        const QString manifestPath = QDir(userPackagePath(trimmed)).filePath(QStringLiteral("character.json"));
+        if (!CharacterPersonaStore::updateManifestPersonaAtomic(manifestPath, persona, errorMessage))
+        {
+            return false;
+        }
+
+        // 写入用户包后同步清理同 id 覆盖层条目，避免旧覆盖层遮蔽刚写回的人设
+        personaStore.removeOverride(trimmed);
+        return true;
+    }
+
+    if (hasBuiltInPackage(trimmed))
+    {
+        return personaStore.setOverride(trimmed, persona, errorMessage);
+    }
+
+    return setError(errorMessage, QStringLiteral("角色包不存在。"));
+}
+
+bool CharacterPackageRepository::resetCharacterPersonaToDefault(
+    const QString &characterId,
+    QString *errorMessage,
+    const QString &overrideFilePath)
+{
+    const QString trimmed = characterId.trimmed();
+    if (!isValidCharacterId(trimmed))
+    {
+        return setError(errorMessage, QStringLiteral("角色 id 无效。"));
+    }
+
+    const CharacterPersonaStore personaStore(effectivePersonaStorePath(overrideFilePath));
+    if (hasUserPackage(trimmed))
+    {
+        const QString manifestPath = QDir(userPackagePath(trimmed)).filePath(QStringLiteral("character.json"));
+        if (!CharacterPersonaStore::updateManifestPersonaAtomic(manifestPath, QString(), errorMessage))
+        {
+            return false;
+        }
+
+        personaStore.removeOverride(trimmed);
+        return true;
+    }
+
+    if (hasBuiltInPackage(trimmed))
+    {
+        return personaStore.removeOverride(trimmed, errorMessage);
+    }
+
+    return setError(errorMessage, QStringLiteral("角色包不存在。"));
 }

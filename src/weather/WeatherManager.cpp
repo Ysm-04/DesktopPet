@@ -1,32 +1,25 @@
 #include "WeatherManager.h"
 
 #include "../util/Logger.h"
-#include "WeatherLocationResolver.h"
 
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
-#include <QUrlQuery>
 #include <QtGlobal>
 
 #include <utility>
 
 namespace
 {
-constexpr int ForecastDays = 4;
-constexpr int GeocodingCandidateCount = 5;
 constexpr int IpLocationProviderCount = 2;
 constexpr int IpLocationAttemptTimeoutMs = 5000;
-
-QString normalizedProvider(const WeatherConfig &config)
-{
-    const QString provider = config.provider.trimmed().toLower();
-    return provider.isEmpty() ? QStringLiteral("open-meteo") : provider;
-}
+constexpr int MinAttemptTimeoutMs = 3000;
+constexpr int FastFallbackAttemptCapMs = 5500;
+constexpr int MaxSingleAttemptTimeoutMs = 10000;
+constexpr int ForecastDemoteTimeoutThreshold = 2;
+constexpr qint64 ForecastDemoteDurationSeconds = 300;
+constexpr qint64 GeocodeCacheTtlSeconds = 6 * 3600;
+constexpr int MaxGeocodeCacheEntries = 64;
 
 QString normalizedLanguage(const WeatherConfig &config)
 {
@@ -34,55 +27,11 @@ QString normalizedLanguage(const WeatherConfig &config)
     return language.isEmpty() ? QStringLiteral("zh") : language;
 }
 
-QDateTime dateTimeFromOpenMeteo(const QString &text)
+QString geocodeCacheKey(const WeatherLocationSearch &search)
 {
-    QDateTime value = QDateTime::fromString(text, Qt::ISODate);
-    if (value.isValid())
-    {
-        return value;
-    }
-
-    value = QDateTime::fromString(text, QStringLiteral("yyyy-MM-ddTHH:mm"));
-    if (value.isValid())
-    {
-        return value;
-    }
-
-    return {};
-}
-
-bool jsonDouble(const QJsonObject &object, const QString &key, double *value)
-{
-    const QJsonValue jsonValue = object.value(key);
-    if (!jsonValue.isDouble())
-    {
-        return false;
-    }
-    if (value != nullptr)
-    {
-        *value = jsonValue.toDouble();
-    }
-    return true;
-}
-
-bool jsonInt(const QJsonObject &object, const QString &key, int *value)
-{
-    const QJsonValue jsonValue = object.value(key);
-    if (!jsonValue.isDouble())
-    {
-        return false;
-    }
-    if (value != nullptr)
-    {
-        *value = jsonValue.toInt();
-    }
-    return true;
-}
-
-QJsonArray arrayValue(const QJsonObject &object, const QString &key)
-{
-    const QJsonValue value = object.value(key);
-    return value.isArray() ? value.toArray() : QJsonArray();
+    return search.queryName.trimmed().toLower()
+        + QLatin1Char('|')
+        + search.countryCode.trimmed().toUpper();
 }
 
 WeatherLocation locationFromCandidate(const WeatherLocationCandidate &candidate, WeatherLocationSource source)
@@ -98,38 +47,21 @@ WeatherLocation locationFromCandidate(const WeatherLocationCandidate &candidate,
     return location;
 }
 
-QVector<WeatherLocationCandidate> candidatesFromGeocodingResults(const QJsonArray &results)
+QString stageName(int stageValue)
 {
-    QVector<WeatherLocationCandidate> candidates;
-    for (const QJsonValue &value : results)
+    switch (stageValue)
     {
-        if (!value.isObject())
-        {
-            continue;
-        }
-
-        const QJsonObject city = value.toObject();
-        WeatherLocationCandidate candidate;
-        if (!jsonDouble(city, QStringLiteral("latitude"), &candidate.latitude)
-            || !jsonDouble(city, QStringLiteral("longitude"), &candidate.longitude))
-        {
-            continue;
-        }
-
-        candidate.cityName = city.value(QStringLiteral("name")).toString();
-        candidate.adminName = city.value(QStringLiteral("admin1")).toString();
-        candidate.countryName = city.value(QStringLiteral("country")).toString();
-        candidate.timezone = city.value(QStringLiteral("timezone")).toString();
-        candidate.countryCode = city.value(QStringLiteral("country_code")).toString().trimmed().toUpper();
-        candidate.featureCode = city.value(QStringLiteral("feature_code")).toString().trimmed().toUpper();
-        const QJsonValue population = city.value(QStringLiteral("population"));
-        if (population.isDouble())
-        {
-            candidate.population = qRound64(population.toDouble());
-        }
-        candidates.append(candidate);
+    case 1:
+        return QStringLiteral("ip-location");
+    case 2:
+        return QStringLiteral("geocoding");
+    case 3:
+        return QStringLiteral("forecast");
+    case 4:
+        return QStringLiteral("direct-wttr");
+    default:
+        return QStringLiteral("idle");
     }
-    return candidates;
 }
 }
 
@@ -137,23 +69,7 @@ WeatherManager::WeatherManager()
 {
     m_timeoutTimer.setSingleShot(true);
     QObject::connect(&m_timeoutTimer, &QTimer::timeout, [this]() {
-        if (m_ipLocationAttemptActive)
-        {
-            Logger::warning(QStringLiteral("Weather IP location provider timed out: index=%1")
-                .arg(m_ipLocationProviderIndex));
-            m_ipLocationAttemptActive = false;
-            clearReply();
-            startNextIpLocationRequest();
-            return;
-        }
-
-        if (m_locationTestOnly)
-        {
-            finishLocationTestWithError(QStringLiteral("城市测试超时，请稍后再试。"));
-            return;
-        }
-
-        finishWithError(QStringLiteral("天气查询超时，请稍后再试。"));
+        handleAttemptTimeout();
     });
 }
 
@@ -189,45 +105,66 @@ void WeatherManager::queryWeather(const QString &text, const WeatherConfig &conf
     }
 
     m_config = config;
-    m_config.provider = normalizedProvider(m_config);
+    m_config.provider = WeatherProviderCodec::normalizedProviderSetting(m_config.provider);
     m_config.language = normalizedLanguage(m_config);
-    m_config.timeoutMs = qBound(3000, m_config.timeoutMs, 60000);
+    m_config.timeoutMs = qBound(MinAttemptTimeoutMs, m_config.timeoutMs, 60000);
     m_callback = std::move(callback);
     m_locationTestCallback = nullptr;
     m_locationTestOnly = false;
-    m_locationCandidates.clear();
-    m_hasLocationAmbiguity = false;
+    resetRequestState();
     m_busy = true;
 
-    if (m_config.provider != QStringLiteral("open-meteo"))
-    {
-        finishWithError(QStringLiteral("当前天气源暂不支持：%1。").arg(m_config.provider));
-        return;
-    }
-
+    QString targetCity;
+    WeatherLocationSource targetSource = WeatherLocationSource::ExplicitCity;
     if (!m_query.cityName.trimmed().isEmpty())
     {
-        m_query.locationSource = WeatherLocationSource::ExplicitCity;
-        startGeocodingRequest(m_query.cityName.trimmed(), WeatherLocationSource::ExplicitCity, false);
-        return;
+        targetCity = m_query.cityName.trimmed();
+        targetSource = WeatherLocationSource::ExplicitCity;
     }
-
-    const QString defaultCity = m_config.defaultCityName.trimmed();
-    if (!defaultCity.isEmpty())
+    else if (!m_config.defaultCityName.trimmed().isEmpty())
     {
-        m_query.locationSource = WeatherLocationSource::SettingsDefault;
-        startGeocodingRequest(defaultCity, WeatherLocationSource::SettingsDefault, false);
-        return;
+        targetCity = m_config.defaultCityName.trimmed();
+        targetSource = WeatherLocationSource::SettingsDefault;
     }
-
-    if (m_config.autoLocateWhenNoDefault)
+    else if (m_config.autoLocateWhenNoDefault)
     {
         m_query.locationSource = WeatherLocationSource::IpFallback;
         startIpLocationRequest();
         return;
     }
+    else
+    {
+        finishWithError(QStringLiteral("没有识别到城市。请在问题里写城市，或到设置页配置默认城市。"));
+        return;
+    }
 
-    finishWithError(QStringLiteral("没有识别到城市。请在问题里写城市，或到设置页配置默认城市。"));
+    m_query.locationSource = targetSource;
+    m_location = {};
+    m_location.source = targetSource;
+    m_locationSearch = WeatherLocationResolver::resolveSearch(targetCity);
+    if (m_locationSearch.queryName.trimmed().isEmpty())
+    {
+        finishWithError(QStringLiteral("没有识别到有效城市名称。"));
+        return;
+    }
+
+    m_allowDirectWttrFallback = WeatherProviderCodec::canUseDirectWttrQuery(m_query);
+    if (tryApplyCachedGeocode(m_locationSearch, targetSource))
+    {
+        Logger::info(QStringLiteral("Weather geocoding cache hit: source=%1")
+            .arg(static_cast<int>(targetSource)));
+        startForecastPipeline();
+        return;
+    }
+
+    if (m_config.provider == QStringLiteral("wttr") && m_allowDirectWttrFallback)
+    {
+        m_directWttrTriedFirst = true;
+        startDirectWttrRequest();
+        return;
+    }
+
+    startGeocodingPipeline();
 }
 
 void WeatherManager::resolveLocationForTest(const QString &cityName, const WeatherConfig &config, LocationTestCallback callback)
@@ -252,26 +189,28 @@ void WeatherManager::resolveLocationForTest(const QString &cityName, const Weath
     }
 
     m_config = config;
-    m_config.provider = normalizedProvider(m_config);
+    m_config.provider = WeatherProviderCodec::normalizedProviderSetting(m_config.provider);
     m_config.language = normalizedLanguage(m_config);
-    m_config.timeoutMs = qBound(3000, m_config.timeoutMs, 60000);
+    m_config.timeoutMs = qBound(MinAttemptTimeoutMs, m_config.timeoutMs, 60000);
     m_query = {};
     m_query.cityName = normalizedCityName;
     m_query.locationSource = WeatherLocationSource::SettingsDefault;
     m_callback = nullptr;
     m_locationTestCallback = std::move(callback);
     m_locationTestOnly = true;
-    m_locationCandidates.clear();
-    m_hasLocationAmbiguity = false;
+    resetRequestState();
     m_busy = true;
 
-    if (m_config.provider != QStringLiteral("open-meteo"))
+    m_location = {};
+    m_location.source = WeatherLocationSource::SettingsDefault;
+    m_locationSearch = WeatherLocationResolver::resolveSearch(normalizedCityName);
+    if (m_locationSearch.queryName.trimmed().isEmpty())
     {
-        finishLocationTestWithError(QStringLiteral("当前天气源暂不支持：%1。").arg(m_config.provider));
+        finishLocationTestWithError(QStringLiteral("没有识别到有效城市名称。"));
         return;
     }
 
-    startGeocodingRequest(normalizedCityName, WeatherLocationSource::SettingsDefault, true);
+    startGeocodingPipeline();
 }
 
 void WeatherManager::cancel()
@@ -279,42 +218,52 @@ void WeatherManager::cancel()
     m_callback = nullptr;
     m_locationTestCallback = nullptr;
     m_locationTestOnly = false;
-    m_locationCandidates.clear();
-    m_hasLocationAmbiguity = false;
-    m_locationSearch = {};
-    m_ipLocationAttemptActive = false;
-    m_ipLocationProviderIndex = -1;
+    resetRequestState();
     clearReply();
     m_busy = false;
 }
 
-void WeatherManager::startGeocodingRequest(const QString &cityName, WeatherLocationSource source, bool locationTestOnly)
+void WeatherManager::startGeocodingPipeline()
 {
-    m_location = {};
-    m_location.source = source;
-    m_locationTestOnly = locationTestOnly;
-    m_locationSearch = WeatherLocationResolver::resolveSearch(cityName);
-    if (m_locationSearch.queryName.trimmed().isEmpty())
+    m_geocodingOrder = WeatherProviderCodec::geocodingFallbackOrder();
+    m_geocodingAttemptIndex = -1;
+    m_hadGeocodingNotFound = false;
+    m_hadGeocodingHttpSuccess = false;
+    startNextGeocodingAttempt();
+}
+
+void WeatherManager::startNextGeocodingAttempt()
+{
+    ++m_geocodingAttemptIndex;
+    if (m_geocodingAttemptIndex >= m_geocodingOrder.size())
     {
-        finishGeocodingWithError(QStringLiteral("没有识别到有效城市名称。"));
+        if (!m_locationTestOnly
+            && m_allowDirectWttrFallback
+            && !m_directWttrTriedFirst
+            && !m_hadGeocodingHttpSuccess)
+        {
+            Logger::warning(QStringLiteral("All weather geocoding providers failed; falling back to direct wttr.in lookup."));
+            startDirectWttrRequest();
+            return;
+        }
+
+        finishGeocodingWithError(m_hadGeocodingNotFound
+            ? QStringLiteral("没有找到匹配的城市。")
+            : QStringLiteral("所有城市解析服务均超时或暂不可用，请检查网络或稍后再试。"));
         return;
     }
 
-    QUrl url(QStringLiteral("https://geocoding-api.open-meteo.com/v1/search"));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("name"), m_locationSearch.queryName);
-    query.addQueryItem(QStringLiteral("count"), QString::number(GeocodingCandidateCount));
-    query.addQueryItem(QStringLiteral("language"), m_config.language);
-    query.addQueryItem(QStringLiteral("format"), QStringLiteral("json"));
-    if (!m_locationSearch.countryCode.isEmpty())
-    {
-        query.addQueryItem(QStringLiteral("countryCode"), m_locationSearch.countryCode);
-    }
-    url.setQuery(query);
+    const WeatherGeocodingProvider provider = m_geocodingOrder.at(m_geocodingAttemptIndex);
+    const bool hasMoreAttempts = (m_geocodingAttemptIndex + 1 < m_geocodingOrder.size())
+        || (!m_locationTestOnly && m_allowDirectWttrFallback && !m_directWttrTriedFirst && !m_hadGeocodingHttpSuccess);
+    const QUrl url = WeatherProviderCodec::buildGeocodingUrl(provider, m_locationSearch, m_config.language);
 
-    startRequest(url, [this](QNetworkReply *reply) {
-        finishGeocodingRequest(reply);
-    });
+    m_stage = RequestStage::Geocoding;
+    m_activeProviderLabel = WeatherProviderCodec::geocodingProviderName(provider);
+    m_activeHost = url.host();
+    startRequest(url, [this, provider](QNetworkReply *reply) {
+        finishGeocodingRequest(reply, provider);
+    }, attemptTimeoutMs(hasMoreAttempts));
 }
 
 void WeatherManager::startIpLocationRequest()
@@ -324,7 +273,6 @@ void WeatherManager::startIpLocationRequest()
     m_locationCandidates.clear();
     m_hasLocationAmbiguity = false;
     m_ipLocationProviderIndex = -1;
-    m_ipLocationAttemptActive = false;
     startNextIpLocationRequest();
 }
 
@@ -333,7 +281,7 @@ void WeatherManager::startNextIpLocationRequest()
     ++m_ipLocationProviderIndex;
     if (m_ipLocationProviderIndex >= IpLocationProviderCount)
     {
-        m_ipLocationAttemptActive = false;
+        m_stage = RequestStage::Idle;
         finishWithError(QStringLiteral("公网 IP 定位服务暂不可用，请在设置页填写默认城市后重试。"));
         return;
     }
@@ -345,62 +293,138 @@ void WeatherManager::startNextIpLocationRequest()
         ? QStringLiteral("https://ipapi.co/json/")
         : QStringLiteral("https://ipwho.is/"));
 
-    m_ipLocationAttemptActive = true;
+    m_stage = RequestStage::IpLocation;
+    m_activeProviderLabel = provider == WeatherIpLocationProvider::IpApiCo
+        ? QStringLiteral("ipapi")
+        : QStringLiteral("ipwhois");
+    m_activeHost = url.host();
     startRequest(url, [this, provider](QNetworkReply *reply) {
         finishIpLocationRequest(reply, provider);
     }, qMin(m_config.timeoutMs, IpLocationAttemptTimeoutMs));
 }
 
-void WeatherManager::startForecastRequest()
+void WeatherManager::startForecastPipeline()
 {
-    QUrl url(QStringLiteral("https://api.open-meteo.com/v1/forecast"));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("latitude"), QString::number(m_location.latitude, 'f', 6));
-    query.addQueryItem(QStringLiteral("longitude"), QString::number(m_location.longitude, 'f', 6));
-    query.addQueryItem(QStringLiteral("current"), QStringLiteral("temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,precipitation"));
-    query.addQueryItem(QStringLiteral("daily"), QStringLiteral("weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max"));
-    query.addQueryItem(QStringLiteral("timezone"), QStringLiteral("auto"));
-    query.addQueryItem(QStringLiteral("forecast_days"), QString::number(ForecastDays));
-    url.setQuery(query);
+    const QVector<WeatherForecastProvider> baseOrder =
+        WeatherProviderCodec::forecastFallbackOrder(m_config.provider, m_query);
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    QVector<WeatherForecastProvider> demotedProviders;
+    QStringList demotedNames;
+    for (const WeatherForecastProvider provider : baseOrder)
+    {
+        const ForecastProviderHealth health = m_forecastProviderHealth.value(static_cast<int>(provider));
+        if (health.demotedUntilUtc.isValid() && health.demotedUntilUtc > nowUtc)
+        {
+            demotedProviders.append(provider);
+            demotedNames.append(WeatherProviderCodec::forecastProviderName(provider));
+        }
+    }
 
-    startRequest(url, [this](QNetworkReply *reply) {
-        finishForecastRequest(reply);
-    });
+    m_forecastOrder = WeatherProviderCodec::applyForecastProviderDemotions(baseOrder, demotedProviders);
+    if (!demotedNames.isEmpty() && !m_forecastOrder.isEmpty())
+    {
+        Logger::info(QStringLiteral("Weather forecast provider demoted temporarily: demoted=%1 first=%2")
+            .arg(demotedNames.join(QLatin1Char(',')),
+                 WeatherProviderCodec::forecastProviderName(m_forecastOrder.first())));
+    }
+
+    m_forecastAttemptIndex = -1;
+    startNextForecastAttempt();
 }
 
-void WeatherManager::finishGeocodingRequest(QNetworkReply *reply)
+void WeatherManager::startNextForecastAttempt()
 {
+    ++m_forecastAttemptIndex;
+    if (m_forecastAttemptIndex >= m_forecastOrder.size())
+    {
+        finishWithError(QStringLiteral("所有天气服务均超时或暂不可用，请检查网络或稍后再试。"));
+        return;
+    }
+
+    const WeatherForecastProvider provider = m_forecastOrder.at(m_forecastAttemptIndex);
+    const bool hasMoreAttempts = m_forecastAttemptIndex + 1 < m_forecastOrder.size();
+    const QUrl url = WeatherProviderCodec::buildForecastUrl(provider, m_location);
+
+    m_stage = RequestStage::Forecast;
+    m_activeProviderLabel = WeatherProviderCodec::forecastProviderName(provider);
+    m_activeHost = url.host();
+    startRequest(url, [this, provider](QNetworkReply *reply) {
+        finishForecastRequest(reply, provider);
+    }, attemptTimeoutMs(hasMoreAttempts));
+}
+
+void WeatherManager::startDirectWttrRequest()
+{
+    const WeatherLocationSource preservedSource = m_location.source;
+    m_location = {};
+    m_location.source = preservedSource;
+    m_location.cityName = m_locationSearch.originalName.trimmed().isEmpty()
+        ? m_locationSearch.queryName.trimmed()
+        : m_locationSearch.originalName.trimmed();
+    m_locationCandidates.clear();
+    m_hasLocationAmbiguity = false;
+
+    const QUrl url = WeatherProviderCodec::buildDirectWttrUrl(m_locationSearch);
+    m_stage = RequestStage::DirectWttr;
+    m_activeProviderLabel = QStringLiteral("wttr.in");
+    m_activeHost = url.host();
+    startRequest(url, [this](QNetworkReply *reply) {
+        finishDirectWttrRequest(reply);
+    }, attemptTimeoutMs(m_directWttrTriedFirst));
+}
+
+void WeatherManager::finishGeocodingRequest(QNetworkReply *reply, WeatherGeocodingProvider provider)
+{
+    const qint64 elapsedMs = m_attemptTimer.elapsed();
+    const QString providerName = WeatherProviderCodec::geocodingProviderName(provider);
     const QByteArray body = reply->readAll();
     const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (reply->error() != QNetworkReply::NoError)
+    if (reply->error() != QNetworkReply::NoError || httpStatus != 200)
     {
-        Logger::warning(QStringLiteral("Weather geocoding request failed: networkError=%1 http=%2")
+        Logger::warning(QStringLiteral("Weather geocoding attempt failed: provider=%1 elapsedMs=%2 networkError=%3 http=%4")
+            .arg(providerName)
+            .arg(elapsedMs)
             .arg(static_cast<int>(reply->error()))
             .arg(httpStatus));
-        finishGeocodingWithError(QStringLiteral("城市解析服务暂不可用，请稍后再试。"));
+        startNextGeocodingAttempt();
         return;
     }
 
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
+    QVector<WeatherLocationCandidate> rawCandidates;
+    if (!WeatherProviderCodec::parseGeocodingResponse(provider, body, &rawCandidates))
     {
-        finishGeocodingWithError(QStringLiteral("城市解析结果格式无效。"));
+        Logger::warning(QStringLiteral("Weather geocoding parse failed: provider=%1 elapsedMs=%2 bytes=%3")
+            .arg(providerName)
+            .arg(elapsedMs)
+            .arg(body.size()));
+        startNextGeocodingAttempt();
         return;
     }
 
-    const QJsonArray results = document.object().value(QStringLiteral("results")).toArray();
-    m_locationCandidates = WeatherLocationResolver::selectRelevantCandidates(
-        candidatesFromGeocodingResults(results),
-        m_locationSearch);
+    m_hadGeocodingHttpSuccess = true;
+    const QVector<WeatherLocationCandidate> filteredCandidates =
+        WeatherProviderCodec::filterRelevantGeocodingCandidates(provider, rawCandidates, m_locationSearch);
+    m_locationCandidates = WeatherLocationResolver::selectRelevantCandidates(filteredCandidates, m_locationSearch);
     if (m_locationCandidates.isEmpty())
     {
-        finishGeocodingWithError(QStringLiteral("没有找到匹配的城市。"));
+        m_hadGeocodingNotFound = true;
+        Logger::warning(QStringLiteral("Weather geocoding returned no matching candidates: provider=%1 elapsedMs=%2")
+            .arg(providerName)
+            .arg(elapsedMs));
+        startNextGeocodingAttempt();
         return;
     }
 
     m_hasLocationAmbiguity = WeatherLocationResolver::hasAmbiguity(m_locationCandidates);
     m_location = locationFromCandidate(m_locationCandidates.first(), m_location.source);
+    storeCachedGeocode(m_locationSearch);
+
+    Logger::info(QStringLiteral("Weather geocoding succeeded: provider=%1 source=%2 elapsedMs=%3 http=%4 candidates=%5")
+        .arg(providerName)
+        .arg(static_cast<int>(m_location.source))
+        .arg(elapsedMs)
+        .arg(httpStatus)
+        .arg(m_locationCandidates.size()));
 
     if (m_locationTestOnly)
     {
@@ -413,21 +437,24 @@ void WeatherManager::finishGeocodingRequest(QNetworkReply *reply)
         return;
     }
 
-    Logger::info(QStringLiteral("Weather geocoding succeeded: source=%1 http=%2")
-        .arg(QString::number(static_cast<int>(m_location.source)), QString::number(httpStatus)));
-    startForecastRequest();
+    startForecastPipeline();
 }
 
 void WeatherManager::finishIpLocationRequest(QNetworkReply *reply, WeatherIpLocationProvider provider)
 {
-    m_ipLocationAttemptActive = false;
+    const qint64 elapsedMs = m_attemptTimer.elapsed();
+    const QString providerName = provider == WeatherIpLocationProvider::IpApiCo
+        ? QStringLiteral("ipapi")
+        : QStringLiteral("ipwhois");
     const QByteArray body = reply->readAll();
-    if (reply->error() != QNetworkReply::NoError)
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (reply->error() != QNetworkReply::NoError || httpStatus != 200)
     {
-        Logger::warning(QStringLiteral("Weather IP location request failed: provider=%1 networkError=%2 http=%3")
-            .arg(provider == WeatherIpLocationProvider::IpApiCo ? QStringLiteral("ipapi") : QStringLiteral("ipwhois"))
+        Logger::warning(QStringLiteral("Weather IP location request failed: provider=%1 elapsedMs=%2 networkError=%3 http=%4")
+            .arg(providerName)
+            .arg(elapsedMs)
             .arg(static_cast<int>(reply->error()))
-            .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
+            .arg(httpStatus));
         startNextIpLocationRequest();
         return;
     }
@@ -435,104 +462,113 @@ void WeatherManager::finishIpLocationRequest(QNetworkReply *reply, WeatherIpLoca
     WeatherLocation location;
     if (!WeatherLocationResolver::parseIpLocationResponse(body, provider, &location))
     {
-        Logger::warning(QStringLiteral("Weather IP location response was unusable: provider=%1")
-            .arg(provider == WeatherIpLocationProvider::IpApiCo ? QStringLiteral("ipapi") : QStringLiteral("ipwhois")));
+        Logger::warning(QStringLiteral("Weather IP location response was unusable: provider=%1 elapsedMs=%2")
+            .arg(providerName)
+            .arg(elapsedMs));
         startNextIpLocationRequest();
         return;
     }
 
     m_location = location;
     m_ipLocationProviderIndex = -1;
-    Logger::info(QStringLiteral("Weather IP location succeeded: provider=%1")
-        .arg(provider == WeatherIpLocationProvider::IpApiCo ? QStringLiteral("ipapi") : QStringLiteral("ipwhois")));
-    startForecastRequest();
+    Logger::info(QStringLiteral("Weather IP location succeeded: provider=%1 elapsedMs=%2")
+        .arg(providerName)
+        .arg(elapsedMs));
+    startForecastPipeline();
 }
 
-void WeatherManager::finishForecastRequest(QNetworkReply *reply)
+void WeatherManager::finishForecastRequest(QNetworkReply *reply, WeatherForecastProvider provider)
 {
+    const qint64 elapsedMs = m_attemptTimer.elapsed();
+    const QString providerName = WeatherProviderCodec::forecastProviderName(provider);
     const QByteArray body = reply->readAll();
-    if (reply->error() != QNetworkReply::NoError)
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (reply->error() != QNetworkReply::NoError || httpStatus != 200)
     {
-        Logger::warning(QStringLiteral("Weather forecast request failed: networkError=%1 http=%2")
+        Logger::warning(QStringLiteral("Weather forecast attempt failed: provider=%1 elapsedMs=%2 networkError=%3 http=%4")
+            .arg(providerName)
+            .arg(elapsedMs)
             .arg(static_cast<int>(reply->error()))
-            .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()));
-        finishWithError(QStringLiteral("天气数据服务暂不可用，请稍后再试。"));
+            .arg(httpStatus));
+        startNextForecastAttempt();
         return;
     }
 
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
-    {
-        finishWithError(QStringLiteral("天气数据格式无效。"));
-        return;
-    }
-
-    const QJsonObject root = document.object();
     WeatherReport report;
-    report.query = m_query;
-    report.location = m_location;
-    report.dataSourceName = QStringLiteral("Open-Meteo");
+    QString parseError;
+    if (!WeatherProviderCodec::parseForecastResponse(provider, body, m_query, m_location, &report, &parseError))
+    {
+        Logger::warning(QStringLiteral("Weather forecast parse failed: provider=%1 elapsedMs=%2 reason=%3")
+            .arg(providerName)
+            .arg(elapsedMs)
+            .arg(parseError));
+        startNextForecastAttempt();
+        return;
+    }
+
+    m_forecastProviderHealth.remove(static_cast<int>(provider));
     report.locationCandidates = m_locationCandidates;
     report.hasLocationAmbiguity = m_hasLocationAmbiguity;
+    Logger::info(QStringLiteral("Weather forecast succeeded: provider=%1 elapsedMs=%2 http=%3")
+        .arg(providerName)
+        .arg(elapsedMs)
+        .arg(httpStatus));
+    finishWithReport(report);
+}
 
-    const QJsonObject currentObject = root.value(QStringLiteral("current")).toObject();
-    if (!currentObject.isEmpty())
+void WeatherManager::finishDirectWttrRequest(QNetworkReply *reply)
+{
+    const qint64 elapsedMs = m_attemptTimer.elapsed();
+    const QByteArray body = reply->readAll();
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    if (reply->error() != QNetworkReply::NoError || httpStatus != 200)
     {
-        report.current.valid = true;
-        report.current.time = dateTimeFromOpenMeteo(currentObject.value(QStringLiteral("time")).toString());
-        report.current.hasTemperature = jsonDouble(currentObject, QStringLiteral("temperature_2m"), &report.current.temperatureC);
-        report.current.hasApparentTemperature = jsonDouble(currentObject, QStringLiteral("apparent_temperature"), &report.current.apparentTemperatureC);
-        report.current.hasHumidity = jsonDouble(currentObject, QStringLiteral("relative_humidity_2m"), &report.current.humidityPercent);
-        report.current.hasWindSpeed = jsonDouble(currentObject, QStringLiteral("wind_speed_10m"), &report.current.windSpeedKmh);
-        report.current.hasWindDirection = jsonDouble(currentObject, QStringLiteral("wind_direction_10m"), &report.current.windDirectionDegree);
-        report.current.hasPrecipitation = jsonDouble(currentObject, QStringLiteral("precipitation"), &report.current.precipitationMm);
-        jsonInt(currentObject, QStringLiteral("weather_code"), &report.current.weatherCode);
-    }
-
-    const QJsonObject dailyObject = root.value(QStringLiteral("daily")).toObject();
-    const QJsonArray dates = arrayValue(dailyObject, QStringLiteral("time"));
-    const QJsonArray codes = arrayValue(dailyObject, QStringLiteral("weather_code"));
-    const QJsonArray maxTemperatures = arrayValue(dailyObject, QStringLiteral("temperature_2m_max"));
-    const QJsonArray minTemperatures = arrayValue(dailyObject, QStringLiteral("temperature_2m_min"));
-    const QJsonArray precipitationProbabilities = arrayValue(dailyObject, QStringLiteral("precipitation_probability_max"));
-    for (int index = 0; index < dates.size(); ++index)
-    {
-        WeatherDailyForecast forecast;
-        forecast.date = QDate::fromString(dates.at(index).toString(), Qt::ISODate);
-        if (!forecast.date.isValid())
+        Logger::warning(QStringLiteral("Weather direct wttr.in attempt failed: elapsedMs=%1 networkError=%2 http=%3")
+            .arg(elapsedMs)
+            .arg(static_cast<int>(reply->error()))
+            .arg(httpStatus));
+        if (m_directWttrTriedFirst)
         {
-            continue;
+            const WeatherLocationSource preservedSource = m_location.source;
+            m_location = {};
+            m_location.source = preservedSource;
+            startGeocodingPipeline();
+            return;
         }
-
-        if (index < codes.size() && codes.at(index).isDouble())
-        {
-            forecast.weatherCode = codes.at(index).toInt();
-        }
-        if (index < maxTemperatures.size() && maxTemperatures.at(index).isDouble())
-        {
-            forecast.temperatureMaxC = maxTemperatures.at(index).toDouble();
-            forecast.hasTemperatureMax = true;
-        }
-        if (index < minTemperatures.size() && minTemperatures.at(index).isDouble())
-        {
-            forecast.temperatureMinC = minTemperatures.at(index).toDouble();
-            forecast.hasTemperatureMin = true;
-        }
-        if (index < precipitationProbabilities.size() && precipitationProbabilities.at(index).isDouble())
-        {
-            forecast.precipitationProbabilityPercent = precipitationProbabilities.at(index).toDouble();
-            forecast.hasPrecipitationProbability = true;
-        }
-        report.dailyForecasts.append(forecast);
-    }
-
-    if (!report.current.valid && report.dailyForecasts.isEmpty())
-    {
-        finishWithError(QStringLiteral("天气数据缺少当前天气和未来预报。"));
+        finishWithError(QStringLiteral("所有城市解析及备用天气服务均超时或不可用，请检查网络或稍后再试。"));
         return;
     }
 
+    WeatherReport report;
+    QString parseError;
+    if (!WeatherProviderCodec::parseForecastResponse(
+            WeatherForecastProvider::Wttr,
+            body,
+            m_query,
+            m_location,
+            &report,
+            &parseError))
+    {
+        Logger::warning(QStringLiteral("Weather direct wttr.in parse failed: elapsedMs=%1 reason=%2")
+            .arg(elapsedMs)
+            .arg(parseError));
+        if (m_directWttrTriedFirst)
+        {
+            const WeatherLocationSource preservedSource = m_location.source;
+            m_location = {};
+            m_location.source = preservedSource;
+            startGeocodingPipeline();
+            return;
+        }
+        finishWithError(QStringLiteral("所有城市解析及备用天气服务均超时或不可用，请检查网络或稍后再试。"));
+        return;
+    }
+
+    report.locationCandidates = m_locationCandidates;
+    report.hasLocationAmbiguity = m_hasLocationAmbiguity;
+    Logger::info(QStringLiteral("Weather direct wttr.in succeeded: elapsedMs=%1 http=%2")
+        .arg(elapsedMs)
+        .arg(httpStatus));
     finishWithReport(report);
 }
 
@@ -544,8 +580,15 @@ void WeatherManager::startRequest(
     clearReply();
 
     QNetworkRequest request(url);
-    request.setRawHeader("User-Agent", "QtDesktopPet/0.1");
-    Logger::info(QStringLiteral("Weather request started: host=%1 path=%2").arg(url.host(), url.path()));
+    request.setRawHeader("User-Agent", "QtDesktopPet/0.2 (+https://github.com/Ysm-04/DesktopPet)");
+    request.setRawHeader("Accept", "application/json");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+
+    m_activeTimeoutMs = qBound(MinAttemptTimeoutMs, timeoutMs, 60000);
+    m_attemptTimer.restart();
+    Logger::info(QStringLiteral("Weather request started: stage=%1 provider=%2 host=%3 path=%4 timeoutMs=%5")
+        .arg(stageName(static_cast<int>(m_stage)), m_activeProviderLabel, url.host(), url.path())
+        .arg(m_activeTimeoutMs));
 
     m_currentReply = m_networkManager.get(request);
     m_replyFinishedConnection = QObject::connect(m_currentReply, &QNetworkReply::finished, [this, finishedHandler = std::move(finishedHandler)]() {
@@ -566,13 +609,117 @@ void WeatherManager::startRequest(
         }
     });
 
-    m_timeoutTimer.start(timeoutMs > 0 ? timeoutMs : m_config.timeoutMs);
+    m_timeoutTimer.start(m_activeTimeoutMs);
+}
+
+int WeatherManager::attemptTimeoutMs(bool hasMoreAttempts) const
+{
+    const int configuredTimeout = qBound(MinAttemptTimeoutMs, m_config.timeoutMs, MaxSingleAttemptTimeoutMs);
+    if (hasMoreAttempts)
+    {
+        return qBound(MinAttemptTimeoutMs, qMin(configuredTimeout, FastFallbackAttemptCapMs), MaxSingleAttemptTimeoutMs);
+    }
+    return configuredTimeout;
+}
+
+bool WeatherManager::tryApplyCachedGeocode(const WeatherLocationSearch &search, WeatherLocationSource source)
+{
+    const QString key = geocodeCacheKey(search);
+    const auto it = m_geocodeCache.constFind(key);
+    if (it == m_geocodeCache.constEnd())
+    {
+        return false;
+    }
+
+    const QDateTime nowUtc = QDateTime::currentDateTimeUtc();
+    if (!it->cachedAtUtc.isValid() || it->cachedAtUtc.secsTo(nowUtc) > GeocodeCacheTtlSeconds)
+    {
+        m_geocodeCache.remove(key);
+        return false;
+    }
+
+    m_location = it->location;
+    m_location.source = source;
+    m_locationCandidates = it->candidates;
+    m_hasLocationAmbiguity = it->hasAmbiguity;
+    return true;
+}
+
+void WeatherManager::storeCachedGeocode(const WeatherLocationSearch &search)
+{
+    const QString key = geocodeCacheKey(search);
+    if (key.isEmpty() || m_location.cityName.trimmed().isEmpty())
+    {
+        return;
+    }
+
+    if (m_geocodeCache.size() >= MaxGeocodeCacheEntries && !m_geocodeCache.contains(key))
+    {
+        m_geocodeCache.clear();
+    }
+
+    CachedGeocodeEntry entry;
+    entry.location = m_location;
+    entry.candidates = m_locationCandidates;
+    entry.hasAmbiguity = m_hasLocationAmbiguity;
+    entry.cachedAtUtc = QDateTime::currentDateTimeUtc();
+    m_geocodeCache.insert(key, entry);
+}
+
+void WeatherManager::handleAttemptTimeout()
+{
+    const RequestStage timedOutStage = m_stage;
+    const qint64 elapsedMs = m_attemptTimer.isValid() ? m_attemptTimer.elapsed() : m_activeTimeoutMs;
+    Logger::warning(QStringLiteral("Weather request timed out: stage=%1 provider=%2 host=%3 elapsedMs=%4 timeoutMs=%5")
+        .arg(stageName(static_cast<int>(timedOutStage)), m_activeProviderLabel, m_activeHost)
+        .arg(elapsedMs)
+        .arg(m_activeTimeoutMs));
+
+    clearReply();
+
+    switch (timedOutStage)
+    {
+    case RequestStage::IpLocation:
+        startNextIpLocationRequest();
+        break;
+    case RequestStage::Geocoding:
+        startNextGeocodingAttempt();
+        break;
+    case RequestStage::Forecast:
+        if (m_forecastAttemptIndex >= 0 && m_forecastAttemptIndex < m_forecastOrder.size())
+        {
+            const WeatherForecastProvider timedOutProvider = m_forecastOrder.at(m_forecastAttemptIndex);
+            ForecastProviderHealth &health = m_forecastProviderHealth[static_cast<int>(timedOutProvider)];
+            ++health.consecutiveTimeouts;
+            if (health.consecutiveTimeouts >= ForecastDemoteTimeoutThreshold)
+            {
+                health.demotedUntilUtc = QDateTime::currentDateTimeUtc().addSecs(ForecastDemoteDurationSeconds);
+                Logger::warning(QStringLiteral("Weather forecast provider demoted for 300s after consecutive timeouts: provider=%1 count=%2")
+                    .arg(WeatherProviderCodec::forecastProviderName(timedOutProvider))
+                    .arg(health.consecutiveTimeouts));
+            }
+        }
+        startNextForecastAttempt();
+        break;
+    case RequestStage::DirectWttr:
+        if (m_directWttrTriedFirst)
+        {
+            const WeatherLocationSource preservedSource = m_location.source;
+            m_location = {};
+            m_location.source = preservedSource;
+            startGeocodingPipeline();
+            break;
+        }
+        finishWithError(QStringLiteral("所有城市解析及备用天气服务均超时，请检查网络或稍后再试。"));
+        break;
+    case RequestStage::Idle:
+        break;
+    }
 }
 
 void WeatherManager::finishWithError(const QString &message)
 {
-    m_ipLocationAttemptActive = false;
-    m_ipLocationProviderIndex = -1;
+    resetRequestState();
     clearReply();
     WeatherQueryResult result;
     result.success = false;
@@ -593,6 +740,7 @@ void WeatherManager::finishGeocodingWithError(const QString &message)
 
 void WeatherManager::finishLocationTestWithError(const QString &message)
 {
+    resetRequestState();
     clearReply();
     LocationTestResult result;
     result.success = false;
@@ -602,6 +750,7 @@ void WeatherManager::finishLocationTestWithError(const QString &message)
 
 void WeatherManager::finishWithReport(const WeatherReport &report)
 {
+    resetRequestState();
     clearReply();
     WeatherQueryResult result;
     result.success = true;
@@ -626,6 +775,25 @@ void WeatherManager::clearReply()
         reply->abort();
         reply->deleteLater();
     }
+}
+
+void WeatherManager::resetRequestState()
+{
+    m_stage = RequestStage::Idle;
+    m_locationCandidates.clear();
+    m_geocodingOrder.clear();
+    m_forecastOrder.clear();
+    m_activeProviderLabel.clear();
+    m_activeHost.clear();
+    m_activeTimeoutMs = 0;
+    m_geocodingAttemptIndex = -1;
+    m_forecastAttemptIndex = -1;
+    m_ipLocationProviderIndex = -1;
+    m_hasLocationAmbiguity = false;
+    m_allowDirectWttrFallback = true;
+    m_directWttrTriedFirst = false;
+    m_hadGeocodingNotFound = false;
+    m_hadGeocodingHttpSuccess = false;
 }
 
 void WeatherManager::invokeCallback(const WeatherQueryResult &result)

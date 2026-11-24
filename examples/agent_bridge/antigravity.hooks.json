@@ -1,0 +1,38 @@
+{
+  "qt-desktop-pet-status": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source antigravity --state working --summary \"Antigravity session started\" --stdin-sniff --stdout-json \"{}\"",
+        "timeout": 5
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source antigravity --state working --summary \"Antigravity thinking\" --stdin-sniff --stdout-json \"{}\"",
+        "timeout": 5
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source antigravity --state working --stdin-sniff --stdout-json \"{}\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source antigravity --state done --stdin-sniff --stdout-json \"{}\"",
+        "timeout": 5
+      }
+    ]
+  }
+}

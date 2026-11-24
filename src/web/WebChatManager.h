@@ -27,6 +27,8 @@ public:
 
 private:
     void startOpenAIResponses(const WebChatRequest &request);
+    void startOpenAIChatSearch(const WebChatRequest &request);
+    void startDeepSeekWebTools(const WebChatRequest &request);
     void startGeminiGrounding(const WebChatRequest &request);
     void startRequest(const QUrl &url, const QByteArray &payload, int messageCount, const QByteArray &authorizationHeader = {});
     void finishReply();
@@ -35,6 +37,8 @@ private:
     void clearReply();
 
     WebChatResponse parseOpenAIResponse(QNetworkReply *reply, const QByteArray &body) const;
+    WebChatResponse parseOpenAIChatSearchResponse(QNetworkReply *reply, const QByteArray &body) const;
+    WebChatResponse parseDeepSeekWebToolsResponse(QNetworkReply *reply, const QByteArray &body) const;
     WebChatResponse parseGeminiResponse(QNetworkReply *reply, const QByteArray &body) const;
 
     QNetworkAccessManager m_networkManager;

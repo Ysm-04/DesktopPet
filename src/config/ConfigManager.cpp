@@ -18,6 +18,8 @@ namespace
 const QString AppConfigFileName = QStringLiteral("app_config.json");
 const QString AIConfigFileName = QStringLiteral("ai_config.json");
 const QString ConversationHistoryFileName = QStringLiteral("conversation_history.json");
+const QString LongTermMemoryFileName = QStringLiteral("long_term_memory.json");
+const QString CharacterPersonasFileName = QStringLiteral("character_personas.json");
 
 QJsonObject windowObjectFromConfig(const AppConfig &config)
 {
@@ -52,9 +54,15 @@ QJsonObject chatObjectFromConfig(const AppConfig &config)
 {
     QJsonObject chat;
     chat.insert(QStringLiteral("requestContextMessageLimit"), config.requestContextMessageLimit);
+    chat.insert(QStringLiteral("requestContextUseMax"), config.requestContextUseMax);
+    chat.insert(QStringLiteral("requestContextMaxChars"), config.requestContextMaxChars);
     chat.insert(QStringLiteral("memoryHistoryMessageLimit"), config.memoryHistoryMessageLimit);
     chat.insert(QStringLiteral("saveConversationHistory"), config.saveConversationHistory);
+    chat.insert(QStringLiteral("saveAllConversationHistory"), config.saveAllConversationHistory);
     chat.insert(QStringLiteral("savedHistoryMessageLimit"), config.savedHistoryMessageLimit);
+    chat.insert(QStringLiteral("enableHistoryRecall"), config.enableHistoryRecall);
+    chat.insert(QStringLiteral("enableLongTermMemory"), config.enableLongTermMemory);
+    chat.insert(QStringLiteral("autoExtractLongTermMemory"), config.autoExtractLongTermMemory);
     return chat;
 }
 
@@ -72,6 +80,40 @@ QJsonObject reminderObjectFromConfig(const AppConfig &config)
     reminder.insert(QStringLiteral("soundEnabled"), config.reminderSoundEnabled);
     reminder.insert(QStringLiteral("soundVolume"), qBound(0.0, config.reminderSoundVolume, 1.0));
     return reminder;
+}
+
+QJsonObject interactionObjectFromConfig(const AppConfig &config)
+{
+    QJsonObject interaction;
+    interaction.insert(QStringLiteral("enableTouchInteraction"), config.enableTouchInteraction);
+    interaction.insert(QStringLiteral("enableCharacterEffects"), config.enableCharacterEffects);
+    interaction.insert(QStringLiteral("enableStartupGreeting"), config.enableStartupGreeting);
+    interaction.insert(QStringLiteral("enableProactiveCare"), config.enableProactiveCare);
+    interaction.insert(QStringLiteral("sedentaryReminderMinutes"), qBound(30, config.sedentaryReminderMinutes, 180));
+    return interaction;
+}
+
+QString normalizedAgentBubbleNotifyLevel(const QString &value)
+{
+    const QString lowered = value.trimmed().toLower();
+    if (lowered == QStringLiteral("all") || lowered == QStringLiteral("silent"))
+    {
+        return lowered;
+    }
+
+    return QStringLiteral("attention");
+}
+
+QJsonObject agentBridgeObjectFromConfig(const AppConfig &config)
+{
+    QJsonObject agentBridge;
+    agentBridge.insert(QStringLiteral("enableAgentBridge"), config.enableAgentBridge);
+    agentBridge.insert(QStringLiteral("showAgentStatusBar"), config.showAgentStatusBar);
+    agentBridge.insert(
+        QStringLiteral("agentBubbleNotifyLevel"),
+        normalizedAgentBubbleNotifyLevel(config.agentBubbleNotifyLevel));
+    agentBridge.insert(QStringLiteral("agentAlertSoundEnabled"), config.agentAlertSoundEnabled);
+    return agentBridge;
 }
 
 QString normalizedProviderName(const QString &provider)
@@ -260,6 +302,19 @@ AppConfig ConfigManager::loadAppConfig() const
         config.requestContextMessageLimit = chat.value(QStringLiteral("requestContextMessageLimit")).toInt(config.requestContextMessageLimit);
     }
 
+    if (chat.contains(QStringLiteral("requestContextUseMax")))
+    {
+        config.requestContextUseMax = chat.value(QStringLiteral("requestContextUseMax")).toBool(config.requestContextUseMax);
+    }
+
+    if (chat.contains(QStringLiteral("requestContextMaxChars")))
+    {
+        config.requestContextMaxChars = qBound(
+            4000,
+            chat.value(QStringLiteral("requestContextMaxChars")).toInt(config.requestContextMaxChars),
+            120000);
+    }
+
     if (chat.contains(QStringLiteral("memoryHistoryMessageLimit")))
     {
         config.memoryHistoryMessageLimit = chat.value(QStringLiteral("memoryHistoryMessageLimit")).toInt(config.memoryHistoryMessageLimit);
@@ -270,9 +325,29 @@ AppConfig ConfigManager::loadAppConfig() const
         config.saveConversationHistory = chat.value(QStringLiteral("saveConversationHistory")).toBool(config.saveConversationHistory);
     }
 
+    if (chat.contains(QStringLiteral("saveAllConversationHistory")))
+    {
+        config.saveAllConversationHistory = chat.value(QStringLiteral("saveAllConversationHistory")).toBool(config.saveAllConversationHistory);
+    }
+
     if (chat.contains(QStringLiteral("savedHistoryMessageLimit")))
     {
         config.savedHistoryMessageLimit = chat.value(QStringLiteral("savedHistoryMessageLimit")).toInt(config.savedHistoryMessageLimit);
+    }
+
+    if (chat.contains(QStringLiteral("enableHistoryRecall")))
+    {
+        config.enableHistoryRecall = chat.value(QStringLiteral("enableHistoryRecall")).toBool(config.enableHistoryRecall);
+    }
+
+    if (chat.contains(QStringLiteral("enableLongTermMemory")))
+    {
+        config.enableLongTermMemory = chat.value(QStringLiteral("enableLongTermMemory")).toBool(config.enableLongTermMemory);
+    }
+
+    if (chat.contains(QStringLiteral("autoExtractLongTermMemory")))
+    {
+        config.autoExtractLongTermMemory = chat.value(QStringLiteral("autoExtractLongTermMemory")).toBool(config.autoExtractLongTermMemory);
     }
 
     const QJsonObject character = root.value(QStringLiteral("character")).toObject();
@@ -299,6 +374,53 @@ AppConfig ConfigManager::loadAppConfig() const
     if (reminder.contains(QStringLiteral("soundVolume")))
     {
         config.reminderSoundVolume = qBound(0.0, reminder.value(QStringLiteral("soundVolume")).toDouble(config.reminderSoundVolume), 1.0);
+    }
+
+    const QJsonObject interaction = root.value(QStringLiteral("interaction")).toObject();
+    config.enableCharacterEffects = interaction.value(QStringLiteral("enableCharacterEffects")).toBool(true);
+    if (interaction.contains(QStringLiteral("enableTouchInteraction")))
+    {
+        config.enableTouchInteraction = interaction.value(QStringLiteral("enableTouchInteraction")).toBool(config.enableTouchInteraction);
+    }
+
+    if (interaction.contains(QStringLiteral("enableStartupGreeting")))
+    {
+        config.enableStartupGreeting = interaction.value(QStringLiteral("enableStartupGreeting")).toBool(config.enableStartupGreeting);
+    }
+
+    if (interaction.contains(QStringLiteral("enableProactiveCare")))
+    {
+        config.enableProactiveCare = interaction.value(QStringLiteral("enableProactiveCare")).toBool(config.enableProactiveCare);
+    }
+
+    if (interaction.contains(QStringLiteral("sedentaryReminderMinutes")))
+    {
+        config.sedentaryReminderMinutes = qBound(
+            30,
+            interaction.value(QStringLiteral("sedentaryReminderMinutes")).toInt(config.sedentaryReminderMinutes),
+            180);
+    }
+
+    const QJsonObject agentBridge = root.value(QStringLiteral("agentBridge")).toObject();
+    if (agentBridge.contains(QStringLiteral("enableAgentBridge")))
+    {
+        config.enableAgentBridge = agentBridge.value(QStringLiteral("enableAgentBridge")).toBool(config.enableAgentBridge);
+    }
+
+    if (agentBridge.contains(QStringLiteral("showAgentStatusBar")))
+    {
+        config.showAgentStatusBar = agentBridge.value(QStringLiteral("showAgentStatusBar")).toBool(config.showAgentStatusBar);
+    }
+
+    if (agentBridge.contains(QStringLiteral("agentBubbleNotifyLevel")))
+    {
+        config.agentBubbleNotifyLevel = normalizedAgentBubbleNotifyLevel(
+            agentBridge.value(QStringLiteral("agentBubbleNotifyLevel")).toString(config.agentBubbleNotifyLevel));
+    }
+
+    if (agentBridge.contains(QStringLiteral("agentAlertSoundEnabled")))
+    {
+        config.agentAlertSoundEnabled = agentBridge.value(QStringLiteral("agentAlertSoundEnabled")).toBool(config.agentAlertSoundEnabled);
     }
 
     return config;
@@ -391,6 +513,8 @@ bool ConfigManager::saveAppConfig(const AppConfig &config) const
     root.insert(QStringLiteral("chat"), chatObjectFromConfig(config));
     root.insert(QStringLiteral("character"), characterObjectFromConfig(config));
     root.insert(QStringLiteral("reminder"), reminderObjectFromConfig(config));
+    root.insert(QStringLiteral("interaction"), interactionObjectFromConfig(config));
+    root.insert(QStringLiteral("agentBridge"), agentBridgeObjectFromConfig(config));
 
     QFile file(appConfigPath());
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
@@ -437,6 +561,16 @@ QString ConfigManager::aiConfigPath() const
 QString ConfigManager::conversationHistoryPath() const
 {
     return QDir(configDirectoryPath()).filePath(ConversationHistoryFileName);
+}
+
+QString ConfigManager::longTermMemoryPath() const
+{
+    return QDir(configDirectoryPath()).filePath(LongTermMemoryFileName);
+}
+
+QString ConfigManager::characterPersonasPath() const
+{
+    return QDir(configDirectoryPath()).filePath(CharacterPersonasFileName);
 }
 
 QString ConfigManager::configDirectoryPath() const

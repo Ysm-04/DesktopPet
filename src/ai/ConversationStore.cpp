@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QJsonValue>
+#include <QSaveFile>
 #include <QtGlobal>
 
 #include <utility>
@@ -62,7 +63,17 @@ ChatMessage messageFromObject(const QJsonObject &object)
 
 bool sameMessage(const ChatMessage &left, const ChatMessage &right)
 {
-    return left.role == right.role && left.content == right.content;
+    if (left.role != right.role || left.content != right.content)
+    {
+        return false;
+    }
+
+    if (left.timestamp.isValid() && right.timestamp.isValid())
+    {
+        return left.timestamp == right.timestamp;
+    }
+
+    return true;
 }
 
 int overlappingMessageCount(const QVector<ChatMessage> &existingMessages, const QVector<ChatMessage> &newMessages)
@@ -88,6 +99,15 @@ int overlappingMessageCount(const QVector<ChatMessage> &existingMessages, const 
     }
 
     return 0;
+}
+
+QVector<ChatMessage> normalizedEvenTail(QVector<ChatMessage> messages)
+{
+    if (messages.size() % 2 != 0)
+    {
+        messages.erase(messages.begin());
+    }
+    return messages;
 }
 
 void backupBrokenConversationHistory(const QString &filePath)
@@ -135,7 +155,22 @@ QVector<ChatMessage> ConversationStore::load(int maxMessages, QString *errorMess
     return recentMessages(readMessages(errorMessage), maxMessages);
 }
 
+QVector<ChatMessage> ConversationStore::loadAll(QString *errorMessage) const
+{
+    return normalizedEvenTail(readMessages(errorMessage));
+}
+
 bool ConversationStore::save(const QVector<ChatMessage> &messages, int maxMessages) const
+{
+    return saveInternal(messages, maxMessages, false);
+}
+
+bool ConversationStore::saveAll(const QVector<ChatMessage> &messages) const
+{
+    return saveInternal(messages, 0, true);
+}
+
+bool ConversationStore::saveInternal(const QVector<ChatMessage> &messages, int maxMessages, bool unlimited) const
 {
     const QFileInfo fileInfo(m_filePath);
     QDir directory(fileInfo.absolutePath());
@@ -158,8 +193,11 @@ bool ConversationStore::save(const QVector<ChatMessage> &messages, int maxMessag
         mergedMessages.append(message);
     }
 
+    const QVector<ChatMessage> storedMessages = unlimited
+        ? normalizedEvenTail(mergedMessages)
+        : recentMessages(mergedMessages, maxMessages);
+
     QJsonArray messageArray;
-    const QVector<ChatMessage> storedMessages = recentMessages(mergedMessages, maxMessages);
     for (const ChatMessage &message : storedMessages)
     {
         if (message.role.isEmpty() || message.content.trimmed().isEmpty())
@@ -174,15 +212,29 @@ bool ConversationStore::save(const QVector<ChatMessage> &messages, int maxMessag
     root.insert(QStringLiteral("version"), StoreVersion);
     root.insert(QStringLiteral("messages"), messageArray);
 
-    QFile file(m_filePath);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    const QByteArray payload = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    QSaveFile file(m_filePath);
+    if (!file.open(QIODevice::WriteOnly))
     {
         Logger::warning(QStringLiteral("Unable to open conversation history for writing."));
         return false;
     }
 
-    const QJsonDocument document(root);
-    return file.write(document.toJson(QJsonDocument::Indented)) >= 0;
+    const qint64 written = file.write(payload);
+    if (written != payload.size())
+    {
+        file.cancelWriting();
+        Logger::warning(QStringLiteral("Conversation history write was incomplete."));
+        return false;
+    }
+
+    if (!file.commit())
+    {
+        Logger::warning(QStringLiteral("Unable to commit conversation history."));
+        return false;
+    }
+
+    return true;
 }
 
 bool ConversationStore::clear() const
@@ -277,10 +329,5 @@ QVector<ChatMessage> ConversationStore::recentMessages(const QVector<ChatMessage
     }
 
     const int firstIndex = qMax(0, messages.size() - boundedMaxMessages);
-    QVector<ChatMessage> recent = messages.mid(firstIndex);
-    if (recent.size() % 2 != 0)
-    {
-        recent.erase(recent.begin());
-    }
-    return recent;
+    return normalizedEvenTail(messages.mid(firstIndex));
 }

@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Public user documentation only. Internal plans and acceptance records stay private.
+$publicDocFiles = @("character-package-v2.md", "character-studio.md")
 
 function Get-FullPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -38,6 +40,7 @@ function Should-ExcludeDirectory([string]$RelativePath) {
         ".codex",
         "build",
         "dist",
+        "output",
         "release_packages",
         "docs",
         "internal",
@@ -134,10 +137,19 @@ if (Test-Path -LiteralPath $outputPath) {
 
 New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
 Copy-PublicTree -SourceDir $repoRoot -DestinationDir $outputPath -RelativeDir ""
+New-Item -ItemType Directory -Path (Join-Path $outputPath "docs") -Force | Out-Null
+foreach ($name in $publicDocFiles) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "docs/$name") -Destination (Join-Path $outputPath "docs/$name")
+}
 
-foreach ($forbiddenRoot in @("docs", "internal", "reports")) {
+foreach ($forbiddenRoot in @("internal", "output", "reports", "build", "dist", "release_packages", ".git", ".agents", "config", "logs")) {
     if (Test-Path -LiteralPath (Join-Path $outputPath $forbiddenRoot)) {
         throw "Public export isolation failed; forbidden directory was copied: $forbiddenRoot"
+    }
+}
+foreach ($item in Get-ChildItem -LiteralPath (Join-Path $outputPath "docs") -Force -Recurse) {
+    if ($item.PSIsContainer -or $item.Name -notin $publicDocFiles) {
+        throw "Public export isolation failed; unreviewed documentation was copied: $($item.FullName)"
     }
 }
 if (Test-Path -LiteralPath (Join-Path $outputPath "README.dev.md")) {

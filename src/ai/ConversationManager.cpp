@@ -1,12 +1,95 @@
 #include "ConversationManager.h"
 
+#include "ConversationRecallEngine.h"
+#include "LongTermMemoryStore.h"
+#include "../character/CharacterPersonaStore.h"
+
 #include <QDateTime>
 #include <QtGlobal>
+
 #include <utility>
 
-ConversationManager::ConversationManager()
-    : m_systemPrompt(QStringLiteral(
-        "你是一个 Windows 桌面宠物助手，常驻在用户桌面上。回复要简短、自然、友好，适合显示在桌宠气泡里；除非用户明确要求详细解释，否则不要长篇输出。\n"
+namespace
+{
+bool sameArchiveMessage(const ChatMessage &left, const ChatMessage &right)
+{
+    if (left.role != right.role || left.content != right.content)
+    {
+        return false;
+    }
+
+    if (left.timestamp.isValid() && right.timestamp.isValid())
+    {
+        return left.timestamp == right.timestamp;
+    }
+
+    return true;
+}
+
+int overlappingMessageCount(const QVector<ChatMessage> &archive, const QVector<ChatMessage> &memory)
+{
+    const int maxOverlap = qMin(archive.size(), memory.size());
+    for (int overlap = maxOverlap; overlap > 0; --overlap)
+    {
+        bool matched = true;
+        const int archiveStart = archive.size() - overlap;
+        for (int index = 0; index < overlap; ++index)
+        {
+            if (!sameArchiveMessage(archive.at(archiveStart + index), memory.at(index)))
+            {
+                matched = false;
+                break;
+            }
+        }
+        if (matched)
+        {
+            return overlap;
+        }
+    }
+    return 0;
+}
+
+QVector<ChatMessage> mergedArchiveAndMemory(QVector<ChatMessage> archive, const QVector<ChatMessage> &memory)
+{
+    if (archive.isEmpty())
+    {
+        return memory;
+    }
+
+    if (!memory.isEmpty())
+    {
+        const int overlap = overlappingMessageCount(archive, memory);
+        for (int index = overlap; index < memory.size(); ++index)
+        {
+            const ChatMessage &message = memory.at(index);
+            if (!message.role.trimmed().isEmpty() && !message.content.trimmed().isEmpty())
+            {
+                archive.append(message);
+            }
+        }
+    }
+
+    if (archive.size() % 2 != 0)
+    {
+        archive.erase(archive.begin());
+    }
+    return archive;
+}
+}
+
+ConversationManager::ConversationManager() = default;
+
+QString ConversationManager::defaultPersonaPrompt()
+{
+    return QStringLiteral(
+        "你是一个 Windows 桌面宠物助手，常驻在用户桌面上。语气自然、友好、亲切，像贴心陪伴在桌面上的伙伴。");
+}
+
+QString ConversationManager::fixedCapabilityPrompt()
+{
+    return QStringLiteral(
+        "无论角色设定如何，以下桌宠回复格式、能力说明与安全边界均不可违反：\n"
+        "- 回复要简短、自然，适合显示在桌宠气泡里；除非用户明确要求详细解释，否则不要长篇输出。气泡展示空间较小，尽量使用简短段落或精简列表，避免输出大标题或宽表格。\n"
         "\n"
         "你可以帮助用户：\n"
         "1. 普通聊天、解释问题、整理信息。\n"
@@ -18,17 +101,20 @@ ConversationManager::ConversationManager()
         "   - 建议用户使用市级城市名；区县、乡镇、街道不保证精确。\n"
         "4. 联网模式：\n"
         "   - 用户需要打开输入框里的“联网”开关。\n"
-        "   - 只有当前 AI 配置支持原生联网时才可用，例如 OpenAI 官方联网能力或 Gemini Google Search grounding。\n"
-        "   - DeepSeek 官方 API、第三方 OpenAI-Compatible API 通常不具备可确认的原生联网能力；遇到这类配置时，应明确提醒用户当前配置无法联网，不要假装已经搜索。\n"
+        "   - 支持 OpenAI 官方、DeepSeek 官方、Gemini 原生协议，以及在设置页手动指定联网协议并验证可用的中转站或自定义配置。\n"
+        "   - 如果当前请求已经提供了服务端搜索/联网工具，请直接按需搜索并基于搜索结果简短作答；若未开启联网或当前配置不可用，再提醒用户检查联网设置，不要假装已经搜索。\n"
+        "5. 长期记忆：\n"
+        "   - 用户可以直接说“记住我…”、“把我们刚刚讨论的…提炼到长期记忆中”、“查看长期记忆”或“忘掉关于…的记忆”，应用会自动拦截或结合上下文提炼保存到长期记忆本，也可在 设置 → 长期记忆 中管理。\n"
         "\n"
         "回答规则：\n"
         "- 如果用户只是闲聊，直接自然回复。\n"
         "- 如果用户问“你能做什么”，用简短列表说明上述功能和示例。\n"
         "- 如果用户要创建提醒或查询天气，可以直接提示用户按示例输入。\n"
-        "- 当前应用不能读取、搜索、创建、修改或删除本地文件，不能启动本地应用，也不能执行命令或脚本；遇到这类请求要明确说明能力边界。\n"
+        "- 当前应用不能读取、搜索、创建、修改或删除电脑上的其他本地文件，不能启动本地应用，也不能执行命令或脚本；遇到这类请求要明确说明能力边界。\n"
+        "- 如果当次请求中附带了本应用保存的 `[用户长期记忆]`，请在相关时自然运用其中的用户背景与偏好，不要生硬复述。\n"
+        "- 如果当次请求中附带了本应用检索出的 `[本地历史对话参考]`，可以自然结合其中的早期记录回答用户回顾。\n"
         "- 如果用户询问最新信息但没有开启联网，提醒用户打开“联网”开关；如果当前 AI 配置不支持联网，说明无法使用联网模式。\n"
-        "- 不要声称已经访问本地文件、启动应用或执行系统操作，也不要编造任何未发生的操作结果。"))
-{
+        "- 不要声称已经访问电脑本地文件、启动应用或执行系统操作，也不要编造任何未发生的操作结果。");
 }
 
 ConversationManager::~ConversationManager()
@@ -49,6 +135,16 @@ bool ConversationManager::hasHistory() const
 QVector<ChatMessage> ConversationManager::history() const
 {
     return m_history;
+}
+
+QVector<ChatMessage> ConversationManager::fullHistory() const
+{
+    if (!m_archiveHistoryLoader)
+    {
+        return m_history;
+    }
+
+    return mergedArchiveAndMemory(m_archiveHistoryLoader(), m_history);
 }
 
 int ConversationManager::prunedHistoryMessageCount() const
@@ -83,16 +179,70 @@ void ConversationManager::setRequestContextMessageLimit(int maxMessages)
     m_maxRequestContextMessages = qMax(0, maxMessages);
 }
 
+void ConversationManager::setRequestContextUseMax(bool useMax)
+{
+    m_requestContextUseMax = useMax;
+}
+
+void ConversationManager::setRequestContextMaxChars(int maxChars)
+{
+    m_requestContextMaxChars = qBound(4000, maxChars, 120000);
+}
+
 void ConversationManager::setMemoryHistoryMessageLimit(int maxMessages)
 {
     m_maxStoredHistoryMessages = qMax(0, maxMessages);
     pruneHistory();
 }
 
+void ConversationManager::setHistoryRecallEnabled(bool enabled)
+{
+    m_historyRecallEnabled = enabled;
+}
+
+void ConversationManager::setArchiveHistoryLoader(ArchiveHistoryLoader loader)
+{
+    m_archiveHistoryLoader = std::move(loader);
+}
+
+void ConversationManager::setLongTermMemoryEnabled(bool enabled)
+{
+    m_longTermMemoryEnabled = enabled;
+}
+
+void ConversationManager::setLongTermMemoryLoader(LongTermMemoryLoader loader)
+{
+    m_longTermMemoryLoader = std::move(loader);
+}
+
 void ConversationManager::setConversationMetadata(const QString &provider, const QString &model)
 {
     m_currentProvider = provider.trimmed();
     m_currentModel = model.trimmed();
+}
+
+void ConversationManager::setCharacterPersona(const QString &persona)
+{
+    m_characterPersona = CharacterPersonaStore::sanitizePersona(persona);
+}
+
+QString ConversationManager::characterPersona() const
+{
+    return m_characterPersona;
+}
+
+QString ConversationManager::effectiveSystemPrompt() const
+{
+    const QString personaLayer = m_characterPersona.isEmpty()
+        ? defaultPersonaPrompt()
+        : (QStringLiteral("[角色人设]\n") + m_characterPersona);
+    const QString capabilityLayer = fixedCapabilityPrompt().trimmed();
+    if (capabilityLayer.isEmpty())
+    {
+        return personaLayer;
+    }
+
+    return personaLayer + QStringLiteral("\n\n") + capabilityLayer;
 }
 
 bool ConversationManager::setProvider(std::unique_ptr<LLMProvider> provider)
@@ -202,16 +352,78 @@ void ConversationManager::clear()
 
 ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) const
 {
-    ChatRequest request;
-    if (!m_systemPrompt.trimmed().isEmpty())
+    const QVector<ChatMessage> archivePool = fullHistory();
+    const int poolSize = static_cast<int>(archivePool.size());
+    const int historyCharBudget = qMax(400, m_requestContextMaxChars);
+
+    int earliestAllowedIndex = poolSize;
+    if (m_requestContextUseMax)
     {
-        request.messages.append(ChatMessage{QStringLiteral("system"), m_systemPrompt});
+        earliestAllowedIndex = 0;
+    }
+    else if (m_maxRequestContextMessages > 0)
+    {
+        const int desiredCount = m_maxRequestContextMessages == 1
+            ? 2
+            : (m_maxRequestContextMessages - (m_maxRequestContextMessages % 2));
+        earliestAllowedIndex = qMax(0, poolSize - desiredCount);
     }
 
-    const int firstHistoryIndex = qMax(0, m_history.size() - m_maxRequestContextMessages);
-    for (int index = firstHistoryIndex; index < m_history.size(); ++index)
+    int startIndex = poolSize;
+    int accumulatedChars = 0;
+    for (int index = poolSize - 2; index >= earliestAllowedIndex; index -= 2)
     {
-        request.messages.append(m_history.at(index));
+        const int pairChars = archivePool.at(index).content.size()
+            + archivePool.at(index + 1).content.size();
+        if (startIndex < poolSize && accumulatedChars + pairChars > historyCharBudget)
+        {
+            break;
+        }
+        accumulatedChars += pairChars;
+        startIndex = index;
+    }
+
+    const int includedRecentCount = poolSize - startIndex;
+    QString systemText = effectiveSystemPrompt().trimmed();
+    if (m_longTermMemoryEnabled && m_longTermMemoryLoader)
+    {
+        const QString memoryBlock = LongTermMemoryStore::formatForSystemPrompt(m_longTermMemoryLoader());
+        if (!memoryBlock.isEmpty())
+        {
+            if (!systemText.isEmpty())
+            {
+                systemText += QStringLiteral("\n\n");
+            }
+            systemText += memoryBlock;
+        }
+    }
+    if (m_historyRecallEnabled && poolSize > includedRecentCount)
+    {
+        const QVector<ConversationRecallEngine::RecalledExchange> recalled =
+            ConversationRecallEngine::recallRelevantExchanges(
+                userMessage.content,
+                archivePool,
+                includedRecentCount);
+        const QString recalledBlock = ConversationRecallEngine::formatRecalledContextBlock(recalled);
+        if (!recalledBlock.isEmpty())
+        {
+            if (!systemText.isEmpty())
+            {
+                systemText += QStringLiteral("\n\n");
+            }
+            systemText += recalledBlock;
+        }
+    }
+
+    ChatRequest request;
+    if (!systemText.isEmpty())
+    {
+        request.messages.append(ChatMessage{QStringLiteral("system"), systemText});
+    }
+
+    for (int index = startIndex; index < poolSize; ++index)
+    {
+        request.messages.append(archivePool.at(index));
     }
     request.messages.append(userMessage);
     return request;

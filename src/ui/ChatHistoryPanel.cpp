@@ -1,5 +1,7 @@
 #include "ChatHistoryPanel.h"
 
+#include "MarkdownViewHelper.h"
+
 #include <QApplication>
 #include <QEvent>
 #include <QFrame>
@@ -7,8 +9,11 @@
 #include <QRect>
 #include <QScreen>
 #include <QScrollBar>
-#include <QTextEdit>
+#include <QTextBrowser>
+#include <QTextCharFormat>
+#include <QUrl>
 #include <QVBoxLayout>
+#include <QWindow>
 #include <QtGlobal>
 
 #include <limits>
@@ -84,26 +89,44 @@ QString htmlEscapedContent(QString content)
     content.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
     return content;
 }
+
+bool isDescendantOrSelf(const QObject *object, const QObject *ancestor)
+{
+    while (object != nullptr)
+    {
+        if (object == ancestor)
+        {
+            return true;
+        }
+        object = object->parent();
+    }
+
+    return false;
+}
 }
 
 ChatHistoryPanel::ChatHistoryPanel(QWidget *parent)
     : QDialog(parent)
-    , m_textEdit(new QTextEdit(this))
+    , m_textBrowser(new QTextBrowser(this))
 {
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground);
     setModal(false);
     resize(PanelWidth, PanelHeight);
 
-    m_textEdit->setReadOnly(true);
-    m_textEdit->setFrameShape(QFrame::NoFrame);
-    m_textEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_textEdit->setLineWrapMode(QTextEdit::WidgetWidth);
-    m_textEdit->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_textEdit->installEventFilter(this);
-    m_textEdit->viewport()->installEventFilter(this);
-    m_textEdit->verticalScrollBar()->installEventFilter(this);
+    m_textBrowser->setReadOnly(true);
+    m_textBrowser->setOpenExternalLinks(false);
+    m_textBrowser->setOpenLinks(false);
+    m_textBrowser->setFrameShape(QFrame::NoFrame);
+    m_textBrowser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_textBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_textBrowser->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_textBrowser->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_textBrowser->document()->setDefaultStyleSheet(
+        QStringLiteral("a { color: #175cd3; text-decoration: none; }"));
+    m_textBrowser->installEventFilter(this);
+    m_textBrowser->viewport()->installEventFilter(this);
+    m_textBrowser->verticalScrollBar()->installEventFilter(this);
     if (qApp != nullptr)
     {
         qApp->installEventFilter(this);
@@ -113,7 +136,7 @@ ChatHistoryPanel::ChatHistoryPanel(QWidget *parent)
         "QDialog {"
         "background: transparent;"
         "}"
-        "QTextEdit {"
+        "QTextBrowser {"
         "background: rgba(246, 249, 253, 232);"
         "color: #202124;"
         "border: 1px solid rgba(32, 33, 36, 46);"
@@ -138,7 +161,11 @@ ChatHistoryPanel::ChatHistoryPanel(QWidget *parent)
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(m_textEdit);
+    layout->addWidget(m_textBrowser);
+
+    connect(m_textBrowser, &QTextBrowser::anchorClicked, this, [](const QUrl &url) {
+        MarkdownViewHelper::openExternalUrlIfSafe(url);
+    });
 }
 
 ChatHistoryPanel::~ChatHistoryPanel()
@@ -162,8 +189,8 @@ void ChatHistoryPanel::showAt(const QPoint &anchorPosition)
     show();
     raise();
     activateWindow();
-    m_textEdit->setFocus();
-    m_textEdit->verticalScrollBar()->setValue(m_textEdit->verticalScrollBar()->maximum());
+    m_textBrowser->setFocus();
+    m_textBrowser->verticalScrollBar()->setValue(m_textBrowser->verticalScrollBar()->maximum());
 }
 
 void ChatHistoryPanel::showNear(const QRect &avoidRect)
@@ -172,14 +199,20 @@ void ChatHistoryPanel::showNear(const QRect &avoidRect)
     show();
     raise();
     activateWindow();
-    m_textEdit->setFocus();
-    m_textEdit->verticalScrollBar()->setValue(m_textEdit->verticalScrollBar()->maximum());
+    m_textBrowser->setFocus();
+    m_textBrowser->verticalScrollBar()->setValue(m_textBrowser->verticalScrollBar()->maximum());
 }
 
 bool ChatHistoryPanel::event(QEvent *event)
 {
     if (event->type() == QEvent::WindowDeactivate)
     {
+        const QWidget *activePopup = QApplication::activePopupWidget();
+        if (activePopup != nullptr && isDescendantOrSelf(activePopup, this))
+        {
+            return QDialog::event(event);
+        }
+
         hide();
         return true;
     }
@@ -206,17 +239,44 @@ bool ChatHistoryPanel::eventFilter(QObject *watched, QEvent *event)
 
 bool ChatHistoryPanel::isOwnObject(QObject *object) const
 {
-    while (object != nullptr)
+    if (object == nullptr)
     {
-        if (object == this || object == m_textEdit || object == m_textEdit->viewport() || object == m_textEdit->verticalScrollBar())
-        {
-            return true;
-        }
-
-        object = object->parent();
+        return false;
     }
 
-    return false;
+    if (windowHandle() != nullptr && object == windowHandle())
+    {
+        return true;
+    }
+
+    if (QWidget *activePopup = QApplication::activePopupWidget())
+    {
+        if (isDescendantOrSelf(activePopup, this))
+        {
+            if (activePopup->windowHandle() != nullptr && object == activePopup->windowHandle())
+            {
+                return true;
+            }
+            if (isDescendantOrSelf(object, activePopup))
+            {
+                return true;
+            }
+        }
+    }
+
+    if (isDescendantOrSelf(object, this))
+    {
+        return true;
+    }
+
+    if (m_textBrowser == nullptr)
+    {
+        return false;
+    }
+
+    return isDescendantOrSelf(object, m_textBrowser)
+        || isDescendantOrSelf(object, m_textBrowser->viewport())
+        || isDescendantOrSelf(object, m_textBrowser->verticalScrollBar());
 }
 
 QRect ChatHistoryPanel::availableGeometryForPoint(const QPoint &point) const
@@ -333,7 +393,9 @@ void ChatHistoryPanel::updateContent()
 
     for (const ChatMessage &message : m_messages)
     {
-        const QString content = htmlEscapedContent(message.content);
+        const QString content = message.role == QStringLiteral("assistant")
+            ? MarkdownViewHelper::markdownToHtmlFragment(message.content, m_textBrowser->font())
+            : htmlEscapedContent(message.content);
         if (content.isEmpty())
         {
             continue;
@@ -355,6 +417,7 @@ void ChatHistoryPanel::updateContent()
     }
 
     html += QStringLiteral("</body></html>");
-    m_textEdit->setHtml(html);
-    m_textEdit->verticalScrollBar()->setValue(m_textEdit->verticalScrollBar()->maximum());
+    m_textBrowser->setCurrentCharFormat(QTextCharFormat());
+    m_textBrowser->setHtml(html);
+    m_textBrowser->verticalScrollBar()->setValue(m_textBrowser->verticalScrollBar()->maximum());
 }

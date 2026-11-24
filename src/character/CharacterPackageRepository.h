@@ -1,5 +1,7 @@
 #pragma once
 
+#include "CharacterPersonaStore.h"
+
 #include <QString>
 #include <QVector>
 
@@ -57,4 +59,16 @@ public:
         QString *exportedPath = nullptr,
         QString *errorMessage = nullptr);
     static bool deleteUserPackage(const QString &characterId, QString *errorMessage = nullptr);
+    static ResolvedCharacterPersona resolveCharacterPersona(
+        const QString &characterId,
+        const QString &overrideFilePath = {});
+    static bool saveCharacterPersona(
+        const QString &characterId,
+        const QString &persona,
+        QString *errorMessage = nullptr,
+        const QString &overrideFilePath = {});
+    static bool resetCharacterPersonaToDefault(
+        const QString &characterId,
+        QString *errorMessage = nullptr,
+        const QString &overrideFilePath = {});
 };

@@ -11,7 +11,9 @@ enum class WebProviderKind
 {
     None,
     OpenAIResponses,
+    OpenAIChatSearch,
     GeminiGrounding,
+    DeepSeekWebTools,
 };
 
 struct WebCapability

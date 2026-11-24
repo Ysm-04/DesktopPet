@@ -8,7 +8,7 @@
 #include <QVector>
 
 class QEvent;
-class QTextEdit;
+class QTextBrowser;
 
 class ChatHistoryPanel : public QDialog
 {
@@ -32,7 +32,7 @@ private:
     QPoint smartTopLeftNear(const QRect &avoidRect) const;
     void updateContent();
 
-    QTextEdit *m_textEdit;
+    QTextBrowser *m_textBrowser;
     QVector<ChatMessage> m_messages;
     int m_prunedMessageCount = 0;
 };

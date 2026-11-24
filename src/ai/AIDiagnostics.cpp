@@ -142,6 +142,42 @@ QString diagnosticContext(const AIConfig &config, const QUrl &url)
         .arg(QString::number(config.temperature, 'f', 2));
 }
 
+bool hasErrorPayload(const QJsonObject &root)
+{
+    if (!root.contains(QStringLiteral("error")))
+    {
+        return false;
+    }
+
+    const QJsonValue errorValue = root.value(QStringLiteral("error"));
+    if (errorValue.isNull() || errorValue.isUndefined())
+    {
+        return false;
+    }
+    if (errorValue.isBool())
+    {
+        return errorValue.toBool();
+    }
+    if (errorValue.isDouble())
+    {
+        return errorValue.toDouble() != 0.0;
+    }
+    if (errorValue.isString())
+    {
+        return !errorValue.toString().trimmed().isEmpty();
+    }
+    if (errorValue.isObject())
+    {
+        return !errorValue.toObject().isEmpty();
+    }
+    if (errorValue.isArray())
+    {
+        return !errorValue.toArray().isEmpty();
+    }
+
+    return true;
+}
+
 QString errorMessageFromBody(const QByteArray &body)
 {
     if (body.trimmed().isEmpty())

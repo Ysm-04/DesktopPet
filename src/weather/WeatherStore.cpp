@@ -1,6 +1,7 @@
 #include "WeatherStore.h"
 
 #include "../util/Logger.h"
+#include "WeatherProviderCodec.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -21,11 +22,7 @@ const QString WeatherConfigFileName = QStringLiteral("weather_config.json");
 
 WeatherConfig normalizedConfig(WeatherConfig config)
 {
-    config.provider = config.provider.trimmed().toLower();
-    if (config.provider.isEmpty())
-    {
-        config.provider = QStringLiteral("open-meteo");
-    }
+    config.provider = WeatherProviderCodec::normalizedProviderSetting(config.provider);
 
     config.defaultCityName = config.defaultCityName.trimmed();
     config.language = config.language.trimmed().toLower();

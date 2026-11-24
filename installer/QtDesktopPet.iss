@@ -1,18 +1,29 @@
 #define AppName "QtDesktopPet"
 #ifndef AppVersion
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\dist\QtDesktopPet-0.2.0-windows-x64"
+#define SourceDir "..\dist\QtDesktopPet-0.3.0-windows-x64"
 #endif
 #ifndef OutputDir
 #define OutputDir "..\dist\installer"
+#endif
+
+#if !FileExists(SourceDir + "\QtDesktopPetBridge.exe") || !FileExists(SourceDir + "\deployment-report.json")
+  #error "Run tools/package_release.ps1 first: verified bridge and deployment report are required."
+#endif
+#if !FileExists(SourceDir + "\platforms\qwindows.dll") || !FileExists(SourceDir + "\tls\qschannelbackend.dll")
+  #error "Qt platform/TLS plugins are missing from the release package."
+#endif
+#if !FileExists(SourceDir + "\examples\agent_bridge\dsh-cordis-plugin.js") || !FileExists(SourceDir + "\使用说明.md")
+  #error "Offline user guide or DSH plugin is missing from the release package."
 #endif
 
 [Setup]
 AppId={{B37D912A-7354-4D67-AF75-5EFA7E80D605}
 AppName={#AppName}
 AppVersion={#AppVersion}
+VersionInfoVersion={#AppVersion}
 AppPublisher=Make
 DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
@@ -44,6 +55,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Icons]
 Name: "{group}\QtDesktopPet"; Filename: "{app}\QtDesktopPet.exe"; WorkingDir: "{app}"
+Name: "{group}\使用说明"; Filename: "{sys}\notepad.exe"; Parameters: """{app}\使用说明.md"""
 Name: "{group}\卸载 QtDesktopPet"; Filename: "{uninstallexe}"
 Name: "{userdesktop}\QtDesktopPet"; Filename: "{app}\QtDesktopPet.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 

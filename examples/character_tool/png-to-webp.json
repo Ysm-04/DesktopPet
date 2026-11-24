@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "input": "D:/art/idle",
+  "output": "D:/art/new-character",
+  "id": "my-character",
+  "format": "webp",
+  "sourceFps": 12,
+  "fps": 0,
+  "maxSide": 512
+}

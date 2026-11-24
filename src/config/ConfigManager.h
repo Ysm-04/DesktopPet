@@ -18,6 +18,8 @@ public:
     QString appConfigPath() const;
     QString aiConfigPath() const;
     QString conversationHistoryPath() const;
+    QString longTermMemoryPath() const;
+    QString characterPersonasPath() const;
 
 private:
     QString configDirectoryPath() const;

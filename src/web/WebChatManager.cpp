@@ -4,370 +4,68 @@
 #include "../ai/AIProviderFactory.h"
 #include "../util/Logger.h"
 #include "WebCapabilityDetector.h"
+#include "WebProtocolCodec.h"
 
-#include <QJsonArray>
 #include <QJsonDocument>
-#include <QJsonObject>
-#include <QJsonParseError>
-#include <QJsonValue>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QSet>
-#include <QStringList>
 #include <QUrl>
-#include <QUrlQuery>
 #include <QtGlobal>
 
 #include <utility>
 
 namespace
 {
-QString normalizedGeminiModel(QString model)
+using BodyParserFn = WebChatResponse (*)(const QByteArray &, int, QString *);
+
+WebChatResponse parseProviderResponse(
+    const AIConfig &config,
+    QNetworkReply *reply,
+    const QByteArray &body,
+    const QString &protocolLabel,
+    BodyParserFn parser)
 {
-    model = model.trimmed();
-    if (model.startsWith(QStringLiteral("models/")))
-    {
-        model.remove(0, QStringLiteral("models/").size());
-    }
-    return model;
-}
+    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    const QString context = AIDiagnostics::diagnosticContext(config, reply->request().url());
 
-QString geminiRole(const QString &role)
-{
-    if (role == QStringLiteral("assistant") || role == QStringLiteral("model"))
+    if (reply->error() != QNetworkReply::NoError)
     {
-        return QStringLiteral("model");
-    }
-    return QStringLiteral("user");
-}
-
-QJsonObject textPart(const QString &text)
-{
-    QJsonObject part;
-    part.insert(QStringLiteral("text"), text);
-    return part;
-}
-
-QString openAIResponsesUrl(const AIConfig &config)
-{
-    QString baseUrl = config.baseUrl.trimmed();
-    while (baseUrl.endsWith(QLatin1Char('/')))
-    {
-        baseUrl.chop(1);
+        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
+        Logger::warning(QStringLiteral("Web chat %1 request network error: %2 qtError=%3 errorString=\"%4\" httpStatus=%5 bodySummary=\"%6\"")
+            .arg(protocolLabel, context)
+            .arg(static_cast<int>(reply->error()))
+            .arg(AIDiagnostics::oneLine(reply->errorString()))
+            .arg(httpStatus)
+            .arg(AIDiagnostics::responseBodySummary(body)));
+        return {false, false, {}, bodyError.isEmpty() ? reply->errorString() : bodyError, {}, httpStatus};
     }
 
-    if (baseUrl.endsWith(QStringLiteral("/v1")))
+    QString jsonParseError;
+    const WebChatResponse response = parser(body, httpStatus, &jsonParseError);
+    if (!jsonParseError.isEmpty())
     {
-        return baseUrl + QStringLiteral("/responses");
+        Logger::warning(QStringLiteral("Web chat %1 response JSON parse failed: %2 parseError=\"%3\" bodySummary=\"%4\"")
+            .arg(protocolLabel, context, AIDiagnostics::oneLine(jsonParseError), AIDiagnostics::responseBodySummary(body)));
+        return response;
     }
 
-    return baseUrl + QStringLiteral("/v1/responses");
-}
-
-QUrl geminiRequestUrl(const AIConfig &config)
-{
-    QString baseUrl = config.baseUrl.trimmed();
-    QString path = config.path.trimmed();
-    if (path.isEmpty())
+    if (!response.success)
     {
-        path = QStringLiteral("/v1beta/models/{model}:generateContent");
+        Logger::warning(QStringLiteral("Web chat %1 response failed: %2 httpStatus=%3 error=\"%4\"")
+            .arg(protocolLabel, context)
+            .arg(httpStatus)
+            .arg(AIDiagnostics::safeTextSummary(response.errorMessage)));
+        return response;
     }
 
-    while (baseUrl.endsWith(QLatin1Char('/')))
-    {
-        baseUrl.chop(1);
-    }
+    Logger::info(QStringLiteral("Web chat %1 request completed: %2 httpStatus=%3 responseChars=%4 citations=%5 usedWeb=%6")
+        .arg(protocolLabel, context)
+        .arg(httpStatus)
+        .arg(QString::number(response.content.size()))
+        .arg(QString::number(response.citations.size()))
+        .arg(response.usedWeb ? QStringLiteral("true") : QStringLiteral("false")));
 
-    if (!path.startsWith(QLatin1Char('/')))
-    {
-        path.prepend(QLatin1Char('/'));
-    }
-
-    if (path.contains(QStringLiteral(":streamGenerateContent")))
-    {
-        path.replace(QStringLiteral(":streamGenerateContent"), QStringLiteral(":generateContent"));
-    }
-
-    const QString model = QString::fromUtf8(QUrl::toPercentEncoding(normalizedGeminiModel(config.model)));
-    path.replace(QStringLiteral("{model}"), model);
-    return QUrl(baseUrl + path);
-}
-
-QJsonObject openAIInputMessage(const ChatMessage &message)
-{
-    QJsonObject item;
-    item.insert(QStringLiteral("role"), message.role == QStringLiteral("assistant") ? QStringLiteral("assistant") : QStringLiteral("user"));
-    item.insert(QStringLiteral("content"), message.content);
-    return item;
-}
-
-QJsonObject openAIPayload(const ChatRequest &request, const AIConfig &config)
-{
-    QStringList instructions;
-    QJsonArray input;
-    for (const ChatMessage &message : request.messages)
-    {
-        const QString content = message.content.trimmed();
-        if (content.isEmpty())
-        {
-            continue;
-        }
-
-        if (message.role == QStringLiteral("system"))
-        {
-            instructions.append(content);
-            continue;
-        }
-
-        input.append(openAIInputMessage(message));
-    }
-
-    QJsonArray tools;
-    QJsonObject webSearchTool;
-    webSearchTool.insert(QStringLiteral("type"), QStringLiteral("web_search"));
-    tools.append(webSearchTool);
-
-    QJsonArray include;
-    include.append(QStringLiteral("web_search_call.action.sources"));
-
-    QJsonObject payload;
-    payload.insert(QStringLiteral("model"), config.model);
-    payload.insert(QStringLiteral("input"), input);
-    payload.insert(QStringLiteral("tools"), tools);
-    payload.insert(QStringLiteral("tool_choice"), QStringLiteral("auto"));
-    payload.insert(QStringLiteral("include"), include);
-    payload.insert(QStringLiteral("temperature"), config.temperature);
-    payload.insert(QStringLiteral("max_output_tokens"), config.maxTokens);
-    if (!instructions.isEmpty())
-    {
-        payload.insert(QStringLiteral("instructions"), instructions.join(QStringLiteral("\n\n")));
-    }
-    return payload;
-}
-
-QJsonObject geminiPayload(const ChatRequest &request, const AIConfig &config)
-{
-    QStringList systemParts;
-    QJsonArray contents;
-
-    for (const ChatMessage &message : request.messages)
-    {
-        const QString content = message.content.trimmed();
-        if (content.isEmpty())
-        {
-            continue;
-        }
-
-        if (message.role == QStringLiteral("system"))
-        {
-            systemParts.append(content);
-            continue;
-        }
-
-        QJsonArray parts;
-        parts.append(textPart(content));
-
-        QJsonObject item;
-        item.insert(QStringLiteral("role"), geminiRole(message.role));
-        item.insert(QStringLiteral("parts"), parts);
-        contents.append(item);
-    }
-
-    QJsonArray tools;
-    QJsonObject googleSearchTool;
-    googleSearchTool.insert(QStringLiteral("google_search"), QJsonObject());
-    tools.append(googleSearchTool);
-
-    QJsonObject payload;
-    payload.insert(QStringLiteral("contents"), contents);
-    payload.insert(QStringLiteral("tools"), tools);
-
-    if (!systemParts.isEmpty())
-    {
-        QJsonArray parts;
-        parts.append(textPart(systemParts.join(QStringLiteral("\n\n"))));
-
-        QJsonObject systemInstruction;
-        systemInstruction.insert(QStringLiteral("parts"), parts);
-        payload.insert(QStringLiteral("systemInstruction"), systemInstruction);
-    }
-
-    QJsonObject generationConfig;
-    generationConfig.insert(QStringLiteral("temperature"), config.temperature);
-    generationConfig.insert(QStringLiteral("maxOutputTokens"), config.maxTokens);
-    payload.insert(QStringLiteral("generationConfig"), generationConfig);
-    return payload;
-}
-
-QString textFromGeminiCandidate(const QJsonObject &candidate)
-{
-    const QJsonObject content = candidate.value(QStringLiteral("content")).toObject();
-    const QJsonArray parts = content.value(QStringLiteral("parts")).toArray();
-
-    QString result;
-    for (const QJsonValue &partValue : parts)
-    {
-        if (!partValue.isObject())
-        {
-            continue;
-        }
-
-        const QString text = partValue.toObject().value(QStringLiteral("text")).toString();
-        if (!text.isEmpty())
-        {
-            result += text;
-        }
-    }
-
-    return result;
-}
-
-void appendCitation(QVector<WebCitation> *citations, QSet<QString> *seenUrls, QString title, QString url, const QString &sourceName)
-{
-    if (citations == nullptr || seenUrls == nullptr)
-    {
-        return;
-    }
-
-    title = title.trimmed();
-    url = url.trimmed();
-    if (url.isEmpty() || seenUrls->contains(url))
-    {
-        return;
-    }
-
-    WebCitation citation;
-    citation.index = citations->size() + 1;
-    citation.title = title.isEmpty() ? url : title;
-    citation.url = url;
-    citation.sourceName = sourceName;
-    citations->append(citation);
-    seenUrls->insert(url);
-}
-
-void collectOpenAIAnnotations(
-    const QJsonArray &annotations,
-    QVector<WebCitation> *citations,
-    QSet<QString> *seenUrls)
-{
-    for (const QJsonValue &annotationValue : annotations)
-    {
-        if (!annotationValue.isObject())
-        {
-            continue;
-        }
-
-        const QJsonObject annotation = annotationValue.toObject();
-        const QString type = annotation.value(QStringLiteral("type")).toString();
-        if (type != QStringLiteral("url_citation"))
-        {
-            continue;
-        }
-
-        appendCitation(
-            citations,
-            seenUrls,
-            annotation.value(QStringLiteral("title")).toString(),
-            annotation.value(QStringLiteral("url")).toString(),
-            QStringLiteral("OpenAI Web Search"));
-    }
-}
-
-void collectOpenAISourceObjects(
-    const QJsonValue &value,
-    QVector<WebCitation> *citations,
-    QSet<QString> *seenUrls)
-{
-    if (value.isArray())
-    {
-        const QJsonArray array = value.toArray();
-        for (const QJsonValue &item : array)
-        {
-            collectOpenAISourceObjects(item, citations, seenUrls);
-        }
-        return;
-    }
-
-    if (!value.isObject())
-    {
-        return;
-    }
-
-    const QJsonObject object = value.toObject();
-    const auto appendSourceArray = [&object, citations, seenUrls](const QString &fieldName) {
-        const QJsonArray sources = object.value(fieldName).toArray();
-        for (const QJsonValue &sourceValue : sources)
-        {
-            if (!sourceValue.isObject())
-            {
-                continue;
-            }
-
-            const QJsonObject source = sourceValue.toObject();
-            QString url = source.value(QStringLiteral("url")).toString().trimmed();
-            if (url.isEmpty())
-            {
-                url = source.value(QStringLiteral("uri")).toString().trimmed();
-            }
-
-            appendCitation(
-                citations,
-                seenUrls,
-                source.value(QStringLiteral("title")).toString(),
-                url,
-                QStringLiteral("OpenAI Web Search"));
-        }
-    };
-
-    appendSourceArray(QStringLiteral("sources"));
-    appendSourceArray(QStringLiteral("results"));
-
-    for (auto iterator = object.constBegin(); iterator != object.constEnd(); ++iterator)
-    {
-        collectOpenAISourceObjects(iterator.value(), citations, seenUrls);
-    }
-}
-
-void collectGeminiGroundingCitations(
-    const QJsonObject &candidate,
-    QVector<WebCitation> *citations,
-    QSet<QString> *seenUrls)
-{
-    const QJsonObject grounding = candidate.value(QStringLiteral("groundingMetadata")).toObject();
-    const QJsonArray chunks = grounding.value(QStringLiteral("groundingChunks")).toArray();
-    for (const QJsonValue &chunkValue : chunks)
-    {
-        if (!chunkValue.isObject())
-        {
-            continue;
-        }
-
-        const QJsonObject web = chunkValue.toObject().value(QStringLiteral("web")).toObject();
-        appendCitation(
-            citations,
-            seenUrls,
-            web.value(QStringLiteral("title")).toString(),
-            web.value(QStringLiteral("uri")).toString(),
-            QStringLiteral("Google Search"));
-    }
-
-    const QJsonObject citationMetadata = candidate.value(QStringLiteral("citationMetadata")).toObject();
-    const QJsonArray citationSources = citationMetadata.value(QStringLiteral("citationSources")).toArray();
-    for (const QJsonValue &sourceValue : citationSources)
-    {
-        if (!sourceValue.isObject())
-        {
-            continue;
-        }
-
-        const QJsonObject source = sourceValue.toObject();
-        appendCitation(
-            citations,
-            seenUrls,
-            source.value(QStringLiteral("title")).toString(),
-            source.value(QStringLiteral("uri")).toString(),
-            QStringLiteral("Google Search"));
-    }
+    return response;
 }
 }
 
@@ -433,12 +131,25 @@ void WebChatManager::sendWebChat(const WebChatRequest &request, WebChatCallback 
         return;
     }
 
+    if (capability.kind == WebProviderKind::OpenAIChatSearch)
+    {
+        startOpenAIChatSearch({request.chatRequest, runtimeConfig, webConfig});
+        return;
+    }
+
+    if (capability.kind == WebProviderKind::DeepSeekWebTools)
+    {
+        startDeepSeekWebTools({request.chatRequest, runtimeConfig, webConfig});
+        return;
+    }
+
     if (capability.kind == WebProviderKind::GeminiGrounding)
     {
         startGeminiGrounding({request.chatRequest, runtimeConfig, webConfig});
         return;
     }
 
+    m_currentKind = WebProviderKind::None;
     invokeCallback({false, false, {}, QStringLiteral("当前 AI 配置没有可用的原生联网功能。"), {}, 0});
 }
 
@@ -461,15 +172,37 @@ void WebChatManager::cancel()
 
 void WebChatManager::startOpenAIResponses(const WebChatRequest &request)
 {
-    const QUrl url(openAIResponsesUrl(request.aiConfig));
-    const QByteArray payload = QJsonDocument(openAIPayload(request.chatRequest, request.aiConfig)).toJson(QJsonDocument::Compact);
+    const QUrl url = WebProtocolCodec::buildOpenAIResponsesUrl(request.aiConfig);
+    const QByteArray payload = QJsonDocument(
+        WebProtocolCodec::buildOpenAIResponsesPayload(request.chatRequest, request.aiConfig))
+        .toJson(QJsonDocument::Compact);
+    startRequest(url, payload, request.chatRequest.messages.size(), QByteArray("Bearer ") + request.aiConfig.apiKey.toUtf8());
+}
+
+void WebChatManager::startOpenAIChatSearch(const WebChatRequest &request)
+{
+    const QUrl url = WebProtocolCodec::buildOpenAIChatUrl(request.aiConfig);
+    const QByteArray payload = QJsonDocument(
+        WebProtocolCodec::buildOpenAIChatSearchPayload(request.chatRequest, request.aiConfig))
+        .toJson(QJsonDocument::Compact);
+    startRequest(url, payload, request.chatRequest.messages.size(), QByteArray("Bearer ") + request.aiConfig.apiKey.toUtf8());
+}
+
+void WebChatManager::startDeepSeekWebTools(const WebChatRequest &request)
+{
+    const QUrl url = WebProtocolCodec::buildOpenAIChatUrl(request.aiConfig);
+    const QByteArray payload = QJsonDocument(
+        WebProtocolCodec::buildDeepSeekWebToolsPayload(request.chatRequest, request.aiConfig))
+        .toJson(QJsonDocument::Compact);
     startRequest(url, payload, request.chatRequest.messages.size(), QByteArray("Bearer ") + request.aiConfig.apiKey.toUtf8());
 }
 
 void WebChatManager::startGeminiGrounding(const WebChatRequest &request)
 {
-    const QUrl url = geminiRequestUrl(request.aiConfig);
-    const QByteArray payload = QJsonDocument(geminiPayload(request.chatRequest, request.aiConfig)).toJson(QJsonDocument::Compact);
+    const QUrl url = WebProtocolCodec::buildGeminiGroundingUrl(request.aiConfig);
+    const QByteArray payload = QJsonDocument(
+        WebProtocolCodec::buildGeminiGroundingPayload(request.chatRequest, request.aiConfig))
+        .toJson(QJsonDocument::Compact);
     startRequest(url, payload, request.chatRequest.messages.size());
 }
 
@@ -477,6 +210,7 @@ void WebChatManager::startRequest(const QUrl &url, const QByteArray &payload, in
 {
     if (!url.isValid())
     {
+        clearReply();
         invokeCallback({false, false, {}, QStringLiteral("联网请求 URL 无效。"), {}, 0});
         return;
     }
@@ -518,6 +252,14 @@ void WebChatManager::finishReply()
     if (m_currentKind == WebProviderKind::OpenAIResponses)
     {
         response = parseOpenAIResponse(reply, body);
+    }
+    else if (m_currentKind == WebProviderKind::OpenAIChatSearch)
+    {
+        response = parseOpenAIChatSearchResponse(reply, body);
+    }
+    else if (m_currentKind == WebProviderKind::DeepSeekWebTools)
+    {
+        response = parseDeepSeekWebToolsResponse(reply, body);
     }
     else if (m_currentKind == WebProviderKind::GeminiGrounding)
     {
@@ -581,149 +323,40 @@ void WebChatManager::clearReply()
 
 WebChatResponse WebChatManager::parseOpenAIResponse(QNetworkReply *reply, const QByteArray &body) const
 {
-    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
-        Logger::warning(QStringLiteral("Web chat OpenAI request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 bodySummary=\"%5\"")
-            .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-            .arg(static_cast<int>(reply->error()))
-            .arg(AIDiagnostics::oneLine(reply->errorString()))
-            .arg(httpStatus)
-            .arg(AIDiagnostics::responseBodySummary(body)));
-        return {false, false, {}, bodyError.isEmpty() ? reply->errorString() : bodyError, {}, httpStatus};
-    }
+    return parseProviderResponse(
+        m_currentConfig,
+        reply,
+        body,
+        QStringLiteral("OpenAI Responses"),
+        &WebProtocolCodec::parseOpenAIResponsesBody);
+}
 
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
-    {
-        Logger::warning(QStringLiteral("Web chat OpenAI response JSON parse failed: %1 parseError=\"%2\" bodySummary=\"%3\"")
-            .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-            .arg(AIDiagnostics::oneLine(parseError.errorString()))
-            .arg(AIDiagnostics::responseBodySummary(body)));
-        return {false, false, {}, QStringLiteral("联网响应不是有效 JSON。"), {}, httpStatus};
-    }
+WebChatResponse WebChatManager::parseOpenAIChatSearchResponse(QNetworkReply *reply, const QByteArray &body) const
+{
+    return parseProviderResponse(
+        m_currentConfig,
+        reply,
+        body,
+        QStringLiteral("OpenAI Chat Search"),
+        &WebProtocolCodec::parseOpenAIChatSearchBody);
+}
 
-    const QJsonObject root = document.object();
-    if (root.contains(QStringLiteral("error")))
-    {
-        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
-        return {false, false, {}, bodyError.isEmpty() ? QStringLiteral("联网响应返回错误。") : bodyError, {}, httpStatus};
-    }
-
-    QString content = root.value(QStringLiteral("output_text")).toString();
-    QVector<WebCitation> citations;
-    QSet<QString> seenUrls;
-    bool usedWeb = false;
-
-    const QJsonArray output = root.value(QStringLiteral("output")).toArray();
-    for (const QJsonValue &outputValue : output)
-    {
-        if (!outputValue.isObject())
-        {
-            continue;
-        }
-
-        const QJsonObject outputItem = outputValue.toObject();
-        const QString type = outputItem.value(QStringLiteral("type")).toString();
-        if (type.contains(QStringLiteral("web_search"), Qt::CaseInsensitive))
-        {
-            usedWeb = true;
-            collectOpenAISourceObjects(outputItem, &citations, &seenUrls);
-        }
-
-        const QJsonArray contentItems = outputItem.value(QStringLiteral("content")).toArray();
-        for (const QJsonValue &contentValue : contentItems)
-        {
-            if (!contentValue.isObject())
-            {
-                continue;
-            }
-
-            const QJsonObject contentItem = contentValue.toObject();
-            const QString text = contentItem.value(QStringLiteral("text")).toString();
-            if (content.trimmed().isEmpty() && !text.isEmpty())
-            {
-                content += text;
-            }
-            collectOpenAIAnnotations(contentItem.value(QStringLiteral("annotations")).toArray(), &citations, &seenUrls);
-        }
-    }
-
-    usedWeb = usedWeb || !citations.isEmpty();
-    if (content.trimmed().isEmpty())
-    {
-        return {false, usedWeb, {}, QStringLiteral("联网响应内容为空。"), citations, httpStatus};
-    }
-
-    Logger::info(QStringLiteral("Web chat OpenAI request completed: %1 httpStatus=%2 responseChars=%3 citations=%4 usedWeb=%5")
-        .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-        .arg(httpStatus)
-        .arg(QString::number(content.size()))
-        .arg(QString::number(citations.size()))
-        .arg(usedWeb ? QStringLiteral("true") : QStringLiteral("false")));
-
-    return {true, usedWeb, content, {}, citations, httpStatus};
+WebChatResponse WebChatManager::parseDeepSeekWebToolsResponse(QNetworkReply *reply, const QByteArray &body) const
+{
+    return parseProviderResponse(
+        m_currentConfig,
+        reply,
+        body,
+        QStringLiteral("DeepSeek Web Tools"),
+        &WebProtocolCodec::parseDeepSeekWebToolsBody);
 }
 
 WebChatResponse WebChatManager::parseGeminiResponse(QNetworkReply *reply, const QByteArray &body) const
 {
-    const int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-    if (reply->error() != QNetworkReply::NoError)
-    {
-        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
-        Logger::warning(QStringLiteral("Web chat Gemini request network error: %1 qtError=%2 errorString=\"%3\" httpStatus=%4 bodySummary=\"%5\"")
-            .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-            .arg(static_cast<int>(reply->error()))
-            .arg(AIDiagnostics::oneLine(reply->errorString()))
-            .arg(httpStatus)
-            .arg(AIDiagnostics::responseBodySummary(body)));
-        return {false, false, {}, bodyError.isEmpty() ? reply->errorString() : bodyError, {}, httpStatus};
-    }
-
-    QJsonParseError parseError;
-    const QJsonDocument document = QJsonDocument::fromJson(body, &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject())
-    {
-        Logger::warning(QStringLiteral("Web chat Gemini response JSON parse failed: %1 parseError=\"%2\" bodySummary=\"%3\"")
-            .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-            .arg(AIDiagnostics::oneLine(parseError.errorString()))
-            .arg(AIDiagnostics::responseBodySummary(body)));
-        return {false, false, {}, QStringLiteral("联网响应不是有效 JSON。"), {}, httpStatus};
-    }
-
-    const QJsonObject root = document.object();
-    if (root.contains(QStringLiteral("error")))
-    {
-        const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
-        return {false, false, {}, bodyError.isEmpty() ? QStringLiteral("联网响应返回错误。") : bodyError, {}, httpStatus};
-    }
-
-    const QJsonArray candidates = root.value(QStringLiteral("candidates")).toArray();
-    if (candidates.isEmpty() || !candidates.first().isObject())
-    {
-        return {false, false, {}, QStringLiteral("Gemini 联网响应没有候选结果。"), {}, httpStatus};
-    }
-
-    const QJsonObject candidate = candidates.first().toObject();
-    const QString content = textFromGeminiCandidate(candidate);
-    QVector<WebCitation> citations;
-    QSet<QString> seenUrls;
-    collectGeminiGroundingCitations(candidate, &citations, &seenUrls);
-
-    const bool usedWeb = candidate.contains(QStringLiteral("groundingMetadata")) || !citations.isEmpty();
-    if (content.trimmed().isEmpty())
-    {
-        return {false, usedWeb, {}, QStringLiteral("Gemini 联网响应内容为空。"), citations, httpStatus};
-    }
-
-    Logger::info(QStringLiteral("Web chat Gemini request completed: %1 httpStatus=%2 responseChars=%3 citations=%4 usedWeb=%5")
-        .arg(AIDiagnostics::diagnosticContext(m_currentConfig, reply->request().url()))
-        .arg(httpStatus)
-        .arg(QString::number(content.size()))
-        .arg(QString::number(citations.size()))
-        .arg(usedWeb ? QStringLiteral("true") : QStringLiteral("false")));
-
-    return {true, usedWeb, content, {}, citations, httpStatus};
+    return parseProviderResponse(
+        m_currentConfig,
+        reply,
+        body,
+        QStringLiteral("Gemini"),
+        &WebProtocolCodec::parseGeminiGroundingBody);
 }

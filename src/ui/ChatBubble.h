@@ -4,7 +4,7 @@
 #include <QWidget>
 
 class QEvent;
-class QTextEdit;
+class QTextBrowser;
 
 class ChatBubble : public QWidget
 {
@@ -15,7 +15,8 @@ public:
         const QString &message,
         const QPoint &anchorPosition,
         int durationMs = 10000,
-        bool scrollToBottom = false);
+        bool scrollToBottom = false,
+        bool renderMarkdown = false);
     void updateAnchorPosition(const QPoint &anchorPosition);
     void resetAutoHideTimer();
     void hideBubble();
@@ -25,10 +26,10 @@ protected:
 
 private:
     bool isUserInteractionEvent(QEvent *event) const;
-    QSize preferredBubbleSize(const QString &message) const;
+    QSize preferredBubbleSize(const QString &message, bool renderMarkdown) const;
     void updatePosition();
 
-    QTextEdit *m_textEdit = nullptr;
+    QTextBrowser *m_textBrowser = nullptr;
     QTimer m_hideTimer;
     QPoint m_anchorPosition;
     int m_autoHideDurationMs = 0;

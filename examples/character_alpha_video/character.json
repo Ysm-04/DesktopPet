@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 2,
+  "id": "alpha-video-demo",
+  "displayName": "透明视频 · 合成验证",
+  "author": "QtDesktopPet",
+  "version": "1.0.0",
+  "defaultState": "idle",
+  "base": {"width": 256, "height": 256},
+  "states": {
+    "idle": {
+      "media": {"type": "alpha_video", "path": "runtime-probe.mp4", "layout": "left-right"},
+      "loop": true
+    },
+    "happy": {
+      "media": {"type": "alpha_video", "path": "runtime-probe.mp4", "layout": "left-right"},
+      "loop": false,
+      "next": "idle"
+    }
+  }
+}

@@ -1,6 +1,9 @@
 #pragma once
 
+#include "../agent_bridge/AgentSessionRegistry.h"
+#include "../agent_bridge/AgentStatusTypes.h"
 #include "../character/AnimationClip.h"
+#include "../character/CharacterDialogueProvider.h"
 #include "../character/CharacterPackage.h"
 #include "../character/FrameAnimator.h"
 #include "../config/AppConfig.h"
@@ -8,6 +11,8 @@
 #include "../web/WebChatTypes.h"
 #include "../state/PetStateMachine.h"
 
+#include <QDate>
+#include <QElapsedTimer>
 #include <QMap>
 #include <QPoint>
 #include <QRect>
@@ -26,11 +31,15 @@ class QHideEvent;
 class QMoveEvent;
 class QPixmap;
 class QShowEvent;
+class AgentStatusBar;
+class AgentStatusServer;
 class ChatBubble;
 class ChatHistoryPanel;
 class ChatInputDialog;
 class ConversationManager;
 class ConversationStore;
+class LongTermMemoryExtractor;
+class LongTermMemoryStore;
 class NotificationDispatcher;
 class PetView;
 class ReminderManager;
@@ -52,7 +61,7 @@ public:
     void setTrayNotificationCallback(std::function<bool(const QString &, const QString &)> callback);
     void pauseAnimation();
     void resumeAnimation();
-    void showBubbleMessage(const QString &message);
+    void showBubbleMessage(const QString &message, bool renderMarkdown = false);
 
 protected:
     void contextMenuEvent(QContextMenuEvent *event) override;
@@ -65,14 +74,20 @@ protected:
     void moveEvent(QMoveEvent *event) override;
 
 private:
+    friend class PetWindowStateTestAccess;
+    PetWindow(QWidget *parent, const AppConfig &initialConfig);
     void loadInitialImage();
     bool loadCharacterPackage(const QString &characterId, bool centerWindow);
+    void refreshActiveCharacterPersona();
     void buildAnimationClips();
     void addStateTestActions(QMenu *menu);
     void startChat();
+    void showPendingRequestBubble(const QString &message);
     bool submitChatMessage(const QString &message, bool webEnabled);
     bool submitAiChatMessage(const QString &message);
     bool submitWebChatMessage(const QString &message);
+    bool handleLongTermMemoryChatMessage(const QString &message);
+    void triggerLongTermMemoryExtractionIfNeeded(const QString &userMessage, const QString &assistantMessage);
     bool handleReminderChatMessage(const QString &message);
     bool handleWeatherChatMessage(const QString &message);
     bool hasActiveWebRequest() const;
@@ -105,6 +120,7 @@ private:
     void cancelStreamingChat();
     bool hasActiveAIRequest() const;
     bool isManualStateSwitchLocked() const;
+    QString pendingLocalAnimationState() const;
     void resetBubbleAutoHideTimer();
     QPoint chatInputAnchorPosition() const;
     void updateBubblePosition();
@@ -130,16 +146,40 @@ private:
     void scheduleIdleBehavior();
     void playIdleBehavior();
     void returnToIdleFromBehavior();
+    bool isMicroInteractionBusy() const;
+    void showMicroInteractionMessage(const QString &message, int durationMs = 4500);
+    void triggerPendingTapInteraction();
+    void triggerTouchInteraction(const QPoint &globalPos);
+    void triggerDragDropInteraction();
+    void scheduleStartupGreetingIfNeeded();
+    void tryTriggerStartupGreeting();
+    void checkProactiveCare();
+    void configureAgentBridge();
+    void handleExternalAgentEvent(const AgentStatusEvent &event);
+    void pruneExpiredExternalAgentSessions();
+    void dismissExternalAgentSession(const QString &sessionKey);
+    void clearExternalAgentSessions();
+    void syncExternalAgentPresentation(
+        const AgentArbitrationResult &arbitration,
+        const AgentSessionSnapshot *transitionSession,
+        bool stateTransitioned);
+    void updateAgentStatusBarPosition();
+    bool hasBlockingLocalActivityForAgent() const;
+    bool shouldHoldExternalWorkingState() const;
     void setDisplayImage(const QString &imagePath, bool centerWindow);
     void setDisplayPixmap(const QPixmap &pixmap, bool centerWindow);
     bool isPointVisibleOnScreen(const QPoint &point) const;
     void setAlwaysOnTop(bool enabled);
 
+    std::unique_ptr<AgentStatusBar> m_agentStatusBar;
+    std::unique_ptr<AgentStatusServer> m_agentStatusServer;
     std::unique_ptr<ChatBubble> m_chatBubble;
     std::unique_ptr<ChatHistoryPanel> m_chatHistoryPanel;
     std::unique_ptr<ChatInputDialog> m_chatInputDialog;
     std::unique_ptr<ConversationManager> m_conversationManager;
     std::unique_ptr<ConversationStore> m_conversationStore;
+    std::unique_ptr<LongTermMemoryStore> m_longTermMemoryStore;
+    std::unique_ptr<LongTermMemoryExtractor> m_longTermMemoryExtractor;
     std::unique_ptr<NotificationDispatcher> m_notificationDispatcher;
     std::unique_ptr<ReminderManager> m_reminderManager;
     std::unique_ptr<ReminderSoundPlayer> m_reminderSoundPlayer;
@@ -151,25 +191,48 @@ private:
     QTimer m_behaviorReturnTimer;
     QTimer m_streamBubbleUpdateTimer;
     QTimer m_animationPrewarmTimer;
+    QTimer m_pendingTapTimer;
+    QTimer m_startupGreetingTimer;
+    QTimer m_proactiveCareTimer;
+    QTimer m_agentPruneTimer;
+    QElapsedTimer m_interactionClock;
     AppConfig m_appConfig;
     CharacterPackage m_characterPackage;
+    CharacterDialogueProvider m_dialogueProvider;
+    AgentSessionRegistry m_agentSessionRegistry;
+    AgentState m_activeExternalAgentState = AgentState::Idle;
+    bool m_hasWorkingExternalSession = false;
+    bool m_externalThinkOwned = false;
     QMap<QString, AnimationClip> m_clips;
     QMap<QString, qint64> m_clipLastAccessSerial;
     QSet<QString> m_animationPrewarmAttemptedStates;
     FrameAnimator m_frameAnimator;
     PetStateMachine m_stateMachine;
     QPoint m_dragOffset;
+    QPoint m_leftPressGlobalPos;
+    QPoint m_pendingTapGlobalPos;
     QString m_streamingAssistantText;
     QStringList m_animationPrewarmQueue;
     QVector<ReminderItem> m_pendingVisibleTriggeredReminders;
     ReminderItem m_activeTriggeredReminder;
+    QDate m_lateNightCareDate;
     qint64 m_clipAccessSerial = 0;
+    qint64 m_lastTouchInteractionMs = -1;
+    qint64 m_lastDragDropInteractionMs = -1;
+    qint64 m_lastCareResetMs = 0;
+    qint64 m_lastLateNightCareMs = -1;
+    int m_lateNightCareCount = 0;
     bool m_dragging;
+    bool m_leftMousePressed = false;
+    bool m_dragMovedEnough = false;
+    bool m_ignoreNextLeftRelease = false;
+    bool m_startupGreetingDone = false;
     bool m_alwaysOnTop;
     bool m_centerNextFrame;
     bool m_returnToIdleAfterResume = false;
     bool m_streamingChatActive = false;
     bool m_streamingTalkStarted = false;
+    bool m_explicitMemoryExtractionActive = false;
     bool m_settingsFallbackInContextMenuEnabled = true;
     bool m_hasActiveTriggeredReminder = false;
     mutable qint64 m_visiblePetRectPixmapKey = 0;

@@ -1,0 +1,60 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source codex --state working --summary \"Codex session started\" --stdin-sniff",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source codex --state working --summary \"Codex thinking\" --stdin-sniff",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source codex --state working --stdin-sniff",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Interrupt": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source codex --state needs_input --summary \"Codex paused\" --stdin-sniff",
+            "timeout": 1
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:\\Path\\To\\QtDesktopPet\\QtDesktopPetBridge.exe --source codex --state done --stdin-sniff",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

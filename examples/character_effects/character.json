@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 2,
+  "id": "effect-orb",
+  "displayName": "轻动效示例",
+  "defaultState": "idle",
+  "base": {
+    "width": 256,
+    "height": 256,
+    "anchorX": 0.5,
+    "anchorY": 0
+  },
+  "effects": {
+    "breathing": {
+      "states": [
+        "idle"
+      ],
+      "amplitude": 0.008,
+      "periodMs": 3600
+    },
+    "dragSway": {
+      "maxAngleDeg": 4
+    },
+    "blink": {
+      "state": "idle",
+      "closedFrame": "effects/idle-closed.png",
+      "intervalMs": [
+        4000,
+        8000
+      ],
+      "holdMs": 120
+    },
+    "statusBadge": {
+      "enabled": true
+    }
+  },
+  "states": {
+    "idle": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    },
+    "think": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    },
+    "sleep": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    },
+    "error": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    },
+    "drag": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    },
+    "talk": {
+      "media": {
+        "type": "frames",
+        "path": "idle",
+        "fps": 1
+      },
+      "loop": true
+    }
+  }
+}

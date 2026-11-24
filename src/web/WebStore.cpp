@@ -1,6 +1,7 @@
 #include "WebStore.h"
 
 #include "../util/Logger.h"
+#include "WebCapabilityDetector.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -21,12 +22,7 @@ const QString WebConfigFileName = QStringLiteral("web_config.json");
 
 QString normalizedProviderMode(const QString &mode)
 {
-    const QString normalized = mode.trimmed().toLower();
-    if (normalized == QStringLiteral("openai") || normalized == QStringLiteral("gemini"))
-    {
-        return normalized;
-    }
-    return QStringLiteral("auto");
+    return WebCapabilityDetector::normalizedProviderMode(mode);
 }
 
 WebConfig normalizedConfig(WebConfig config)

@@ -1,16 +1,22 @@
 #include "CharacterPackageLoader.h"
 
+#include "CharacterPersonaStore.h"
+#include "CharacterMediaSpec.h"
+#include "CharacterEffects.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QJsonValue>
+#include <QSet>
 #include <QtGlobal>
 
 namespace
 {
-constexpr int SupportedSchemaVersion = 1;
 
 QString requiredString(const QJsonObject &object, const QString &key)
 {
@@ -78,12 +84,113 @@ CharacterBubble parseBubble(const QJsonObject &root)
     bubble.offsetY = optionalDouble(bubbleObject, QStringLiteral("offsetY"), bubble.offsetY);
     return bubble;
 }
+
+QString parseOptionalPersona(const QJsonObject &root)
+{
+    const QJsonValue personaValue = root.value(QStringLiteral("persona"));
+    if (personaValue.isString())
+    {
+        return CharacterPersonaStore::sanitizePersona(personaValue.toString());
+    }
+
+    if (personaValue.isObject())
+    {
+        const QJsonObject personaObject = personaValue.toObject();
+        const QJsonValue textValue = personaObject.value(QStringLiteral("text"));
+        if (textValue.isString())
+        {
+            return CharacterPersonaStore::sanitizePersona(textValue.toString());
+        }
+
+        const QJsonValue promptValue = personaObject.value(QStringLiteral("prompt"));
+        if (promptValue.isString())
+        {
+            return CharacterPersonaStore::sanitizePersona(promptValue.toString());
+        }
+    }
+
+    return QString();
+}
+
+QStringList parseDialogueGroup(const QJsonObject &dialoguesObject, const QString &key)
+{
+    const QJsonValue groupValue = dialoguesObject.value(key);
+    if (!groupValue.isArray())
+    {
+        return {};
+    }
+
+    const QJsonArray array = groupValue.toArray();
+    QStringList lines;
+    QSet<QString> seen;
+    for (const QJsonValue &entry : array)
+    {
+        if (!entry.isString())
+        {
+            continue;
+        }
+
+        QString cleaned = entry.toString().simplified();
+        if (cleaned.isEmpty())
+        {
+            continue;
+        }
+
+        if (cleaned.size() > CharacterDialogueMaxLineChars)
+        {
+            cleaned = cleaned.left(CharacterDialogueMaxLineChars).trimmed();
+        }
+
+        if (cleaned.isEmpty() || seen.contains(cleaned))
+        {
+            continue;
+        }
+
+        seen.insert(cleaned);
+        lines.append(cleaned);
+        if (lines.size() >= CharacterDialogueMaxLinesPerGroup)
+        {
+            break;
+        }
+    }
+
+    return lines;
+}
+
+CharacterDialogues parseOptionalDialogues(const QJsonObject &root)
+{
+    CharacterDialogues dialogues;
+    const QJsonValue dialoguesValue = root.value(QStringLiteral("dialogues"));
+    if (!dialoguesValue.isObject())
+    {
+        return dialogues;
+    }
+
+    const QJsonObject dialoguesObject = dialoguesValue.toObject();
+    dialogues.tap = parseDialogueGroup(dialoguesObject, QStringLiteral("tap"));
+    dialogues.headpat = parseDialogueGroup(dialoguesObject, QStringLiteral("headpat"));
+    dialogues.dragDrop = parseDialogueGroup(dialoguesObject, QStringLiteral("dragDrop"));
+    dialogues.greetMorning = parseDialogueGroup(dialoguesObject, QStringLiteral("greetMorning"));
+    dialogues.greetAfternoon = parseDialogueGroup(dialoguesObject, QStringLiteral("greetAfternoon"));
+    dialogues.greetEvening = parseDialogueGroup(dialoguesObject, QStringLiteral("greetEvening"));
+    dialogues.greetLateNight = parseDialogueGroup(dialoguesObject, QStringLiteral("greetLateNight"));
+    dialogues.sedentary = parseDialogueGroup(dialoguesObject, QStringLiteral("sedentary"));
+    dialogues.lateNightCare = parseDialogueGroup(dialoguesObject, QStringLiteral("lateNightCare"));
+    dialogues.agentWorking = parseDialogueGroup(dialoguesObject, QStringLiteral("agentWorking"));
+    dialogues.agentDone = parseDialogueGroup(dialoguesObject, QStringLiteral("agentDone"));
+    dialogues.agentNeedsInput = parseDialogueGroup(dialoguesObject, QStringLiteral("agentNeedsInput"));
+    dialogues.agentError = parseDialogueGroup(dialoguesObject, QStringLiteral("agentError"));
+    return dialogues;
+}
 }
 
 CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QString *errorMessage)
 {
+    if (errorMessage) errorMessage->clear();
     CharacterPackage package;
     package.packagePath = QDir::cleanPath(packagePath);
+    if (!CharacterMediaSpec::preflightPackage(package.packagePath, errorMessage))
+        return CharacterPackage();
 
     const QDir packageDirectory(package.packagePath);
     if (!packageDirectory.exists())
@@ -115,7 +222,7 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
 
     const QJsonObject root = document.object();
     package.schemaVersion = root.value(QStringLiteral("schemaVersion")).toInt(0);
-    if (package.schemaVersion != SupportedSchemaVersion)
+    if (!CharacterMediaSpec::isSupportedSchema(root.value(QStringLiteral("schemaVersion"))))
     {
         setError(errorMessage, QStringLiteral("Character package schemaVersion is not supported."));
         return package;
@@ -130,8 +237,10 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
     package.author = requiredString(root, QStringLiteral("author"));
     package.version = requiredString(root, QStringLiteral("version"));
     package.defaultState = requiredString(root, QStringLiteral("defaultState"));
+    package.persona = parseOptionalPersona(root);
     package.base = parseBase(root);
     package.bubble = parseBubble(root);
+    package.dialogues = parseOptionalDialogues(root);
 
     if (package.id.isEmpty())
     {
@@ -148,7 +257,18 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
     const QString previewRelativePath = requiredString(root, QStringLiteral("preview"));
     if (!previewRelativePath.isEmpty())
     {
-        package.previewPath = packageDirectory.filePath(previewRelativePath);
+        // v1 permits a missing optional preview; v2 validates every declared resource.
+        if (package.schemaVersion == 2)
+        {
+            if (!CharacterMediaSpec::resolveResource(package.packagePath, previewRelativePath, &package.previewPath, errorMessage))
+                return CharacterPackage();
+            if (!QFileInfo(package.previewPath).isFile())
+            {
+                setError(errorMessage, QStringLiteral("preview 必须是包内文件。"));
+                return CharacterPackage();
+            }
+        }
+        else package.previewPath = packageDirectory.filePath(previewRelativePath);
     }
 
     const QJsonValue statesValue = root.value(QStringLiteral("states"));
@@ -159,34 +279,51 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
     }
 
     const QJsonObject statesObject = statesValue.toObject();
+    if (statesObject.size() > 64)
+    {
+        setError(errorMessage, QStringLiteral("角色包最多 64 个状态。"));
+        return CharacterPackage();
+    }
     for (auto iterator = statesObject.constBegin(); iterator != statesObject.constEnd(); ++iterator)
     {
         if (!iterator.value().isObject())
         {
+            if (package.schemaVersion == 2)
+            {
+                setError(errorMessage, QStringLiteral("v2 状态必须是对象：") + iterator.key());
+                return CharacterPackage();
+            }
             continue;
         }
 
         const QString stateName = iterator.key();
         const QJsonObject stateObject = iterator.value().toObject();
         CharacterState state;
-        state.name = stateName;
-        state.relativePath = requiredString(stateObject, QStringLiteral("path"));
-        state.fps = stateObject.value(QStringLiteral("fps")).toInt(0);
-        state.loop = stateObject.value(QStringLiteral("loop")).toBool(true);
-        state.nextState = requiredString(stateObject, QStringLiteral("next"));
-
-        if (state.relativePath.isEmpty() || state.fps <= 0)
+        QString stateError;
+        if (!CharacterMediaSpec::parseState(package.schemaVersion, stateName, stateObject,
+                                            package.packagePath, &state, &stateError))
         {
-            continue;
-        }
-
-        state.framePaths = collectPngFrames(packageDirectory.filePath(state.relativePath));
-        if (state.framePaths.isEmpty())
-        {
+            if (package.schemaVersion == 2)
+            {
+                setError(errorMessage, stateError);
+                return CharacterPackage();
+            }
             continue;
         }
 
         package.states.insert(state.name, state);
+    }
+
+    if (package.schemaVersion == 2)
+    {
+        for (const CharacterState &state : package.states)
+        {
+            if (!state.nextState.isEmpty() && !package.hasState(state.nextState))
+            {
+                setError(errorMessage, QStringLiteral("next 指向不存在的状态：") + state.name);
+                return CharacterPackage();
+            }
+        }
     }
 
     if (!package.hasState(package.defaultState))
@@ -201,29 +338,9 @@ CharacterPackage CharacterPackageLoader::load(const QString &packagePath, QStrin
         return CharacterPackage();
     }
 
+    if (!CharacterEffects::parse(root, package.packagePath, package.states, &package.effects, errorMessage))
+        return CharacterPackage();
     return package;
-}
-
-QStringList CharacterPackageLoader::collectPngFrames(const QString &stateDirectoryPath)
-{
-    const QDir stateDirectory(stateDirectoryPath);
-    if (!stateDirectory.exists())
-    {
-        return {};
-    }
-
-    const QFileInfoList frameFiles = stateDirectory.entryInfoList(
-        {QStringLiteral("*.png"), QStringLiteral("*.PNG")},
-        QDir::Files,
-        QDir::Name);
-
-    QStringList framePaths;
-    for (const QFileInfo &frameFile : frameFiles)
-    {
-        framePaths.append(frameFile.absoluteFilePath());
-    }
-
-    return framePaths;
 }
 
 bool CharacterPackageLoader::setError(QString *errorMessage, const QString &message)

@@ -57,7 +57,13 @@ QString textFromGeminiCandidate(const QJsonObject &candidate)
             continue;
         }
 
-        const QString text = partValue.toObject().value(QStringLiteral("text")).toString();
+        const QJsonObject partObject = partValue.toObject();
+        if (partObject.value(QStringLiteral("thought")).toBool(false))
+        {
+            continue;
+        }
+
+        const QString text = partObject.value(QStringLiteral("text")).toString();
         if (!text.isEmpty())
         {
             result += text;
@@ -337,35 +343,66 @@ QJsonObject GoogleGeminiProvider::buildPayload(const ChatRequest &request) const
 QUrl GoogleGeminiProvider::requestUrl(bool stream) const
 {
     QString baseUrl = m_config.baseUrl.trimmed();
-    QString path = m_config.path.trimmed();
-    if (path.isEmpty())
-    {
-        path = QStringLiteral("/v1beta/models/{model}:generateContent");
-    }
-
     while (baseUrl.endsWith(QLatin1Char('/')))
     {
         baseUrl.chop(1);
     }
 
-    if (!path.startsWith(QLatin1Char('/')))
-    {
-        path.prepend(QLatin1Char('/'));
-    }
-
-    if (stream && path.contains(QStringLiteral(":generateContent")))
-    {
-        path.replace(QStringLiteral(":generateContent"), QStringLiteral(":streamGenerateContent"));
-    }
-    else if (!stream && path.contains(QStringLiteral(":streamGenerateContent")))
-    {
-        path.replace(QStringLiteral(":streamGenerateContent"), QStringLiteral(":generateContent"));
-    }
-
     const QString model = QString::fromUtf8(QUrl::toPercentEncoding(normalizedGeminiModel(m_config.model)));
-    path.replace(QStringLiteral("{model}"), model);
+    QString fullUrl;
+    if (baseUrl.contains(QStringLiteral(":generateContent"), Qt::CaseInsensitive)
+        || baseUrl.contains(QStringLiteral(":streamGenerateContent"), Qt::CaseInsensitive))
+    {
+        if (stream)
+        {
+            baseUrl.replace(QStringLiteral(":generateContent"), QStringLiteral(":streamGenerateContent"), Qt::CaseInsensitive);
+        }
+        else
+        {
+            baseUrl.replace(QStringLiteral(":streamGenerateContent"), QStringLiteral(":generateContent"), Qt::CaseInsensitive);
+        }
+        baseUrl.replace(QStringLiteral("{model}"), model);
+        fullUrl = baseUrl;
+    }
+    else
+    {
+        QString path = m_config.path.trimmed();
+        if (path.isEmpty())
+        {
+            path = QStringLiteral("/v1beta/models/{model}:generateContent");
+        }
 
-    QUrl url(baseUrl + path);
+        if (!path.startsWith(QLatin1Char('/')))
+        {
+            path.prepend(QLatin1Char('/'));
+        }
+
+        if (baseUrl.endsWith(QStringLiteral("/v1beta"), Qt::CaseInsensitive)
+            && path.startsWith(QStringLiteral("/v1beta/"), Qt::CaseInsensitive))
+        {
+            baseUrl.chop(7);
+        }
+        else if (baseUrl.endsWith(QStringLiteral("/v1"), Qt::CaseInsensitive)
+            && (path.startsWith(QStringLiteral("/v1/"), Qt::CaseInsensitive)
+                || path.startsWith(QStringLiteral("/v1beta/"), Qt::CaseInsensitive)))
+        {
+            baseUrl.chop(3);
+        }
+
+        if (stream && path.contains(QStringLiteral(":generateContent"), Qt::CaseInsensitive))
+        {
+            path.replace(QStringLiteral(":generateContent"), QStringLiteral(":streamGenerateContent"), Qt::CaseInsensitive);
+        }
+        else if (!stream && path.contains(QStringLiteral(":streamGenerateContent"), Qt::CaseInsensitive))
+        {
+            path.replace(QStringLiteral(":streamGenerateContent"), QStringLiteral(":generateContent"), Qt::CaseInsensitive);
+        }
+
+        path.replace(QStringLiteral("{model}"), model);
+        fullUrl = baseUrl + path;
+    }
+
+    QUrl url(fullUrl);
     if (stream)
     {
         QUrlQuery query(url);
@@ -413,7 +450,7 @@ ChatResponse GoogleGeminiProvider::parseResponse(QNetworkReply *reply, const QBy
     }
 
     const QJsonObject root = document.object();
-    if (root.contains(QStringLiteral("error")))
+    if (AIDiagnostics::hasErrorPayload(root))
     {
         const QString bodyError = AIDiagnostics::errorMessageFromBody(body);
         Logger::warning(QStringLiteral("AI response returned error: %1 httpStatus=%2 bodySummary=\"%3\"")
@@ -508,7 +545,7 @@ bool GoogleGeminiProvider::handleStreamPayload(const QByteArray &payload)
     }
 
     const QJsonObject root = document.object();
-    if (root.contains(QStringLiteral("error")))
+    if (AIDiagnostics::hasErrorPayload(root))
     {
         const QString bodyError = AIDiagnostics::errorMessageFromBody(payload);
         finishWithError(bodyError.isEmpty() ? QStringLiteral("AI stream returned an error.") : bodyError);

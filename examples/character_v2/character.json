@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "id": "my-pet",
+  "displayName": "我的桌宠",
+  "defaultState": "idle",
+  "base": {
+    "width": 512,
+    "height": 512,
+    "scale": 1.0,
+    "anchorX": 0.5,
+    "anchorY": 1.0
+  },
+  "bubble": {"offsetX": 0, "offsetY": -420},
+  "states": {
+    "idle": {
+      "media": {"type": "frames", "path": "idle", "fps": 9},
+      "loop": true
+    },
+    "happy": {
+      "media": {"type": "frames", "path": "happy", "fps": 12},
+      "loop": false,
+      "next": "idle"
+    }
+  }
+}

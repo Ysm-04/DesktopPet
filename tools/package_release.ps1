@@ -1,10 +1,12 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [string]$ExePath,
+    [string]$BridgeExePath = "",
     [string]$Version = "",
     [string]$OutputRoot = "dist",
     [string]$WindeployQtPath = "",
     [string]$MsvcRuntimeDir = "",
+    [string]$WebpRuntimeDir = "",
     [switch]$NoZip,
     [switch]$BuildInstaller,
     [string]$InnoCompilerPath = "",
@@ -45,7 +47,7 @@ function Read-ProjectVersion {
         return $match.Groups[1].Value
     }
 
-    return "0.2.0"
+    throw "Cannot determine the project version from CMakeLists.txt."
 }
 
 function Resolve-WindeployQt {
@@ -245,6 +247,7 @@ function Copy-DirectoryFresh {
         [string]$Destination
     )
 
+    Assert-ChildPath -Path $Destination -ParentPath $packageRoot -Description "Packaged resource directory"
     if (Test-Path -LiteralPath $Destination) {
         Remove-Item -LiteralPath $Destination -Recurse -Force
     }
@@ -267,6 +270,11 @@ function Invoke-CheckedProcess {
 
 $repoRoot = Resolve-RepoRoot
 $resolvedExePath = Resolve-FullPath -Path $ExePath -BasePath $repoRoot
+if ([string]::IsNullOrWhiteSpace($BridgeExePath)) {
+    $resolvedBridgeExePath = Join-Path (Split-Path -Parent $resolvedExePath) "QtDesktopPetBridge.exe"
+} else {
+    $resolvedBridgeExePath = Resolve-FullPath -Path $BridgeExePath -BasePath $repoRoot
+}
 $resolvedOutputRoot = Resolve-FullPath -Path $OutputRoot -BasePath $repoRoot
 if ([string]::IsNullOrWhiteSpace($Version)) {
     $Version = Read-ProjectVersion -RepoRoot $repoRoot
@@ -277,22 +285,46 @@ $packageName = "QtDesktopPet-$Version-windows-x64"
 $packageRoot = Join-Path $resolvedOutputRoot $packageName
 $installerFileName = "$packageName-setup.exe"
 $targetExePath = Join-Path $packageRoot "QtDesktopPet.exe"
+$targetBridgeExePath = Join-Path $packageRoot "QtDesktopPetBridge.exe"
 $resourcesRoot = Join-Path $repoRoot "resources"
 $charactersRoot = Join-Path $resourcesRoot "characters"
 $iconsRoot = Join-Path $resourcesRoot "icons"
 $soundsRoot = Join-Path $resourcesRoot "sounds"
 $licensePath = Join-Path $repoRoot "LICENSE"
 $readmePath = Join-Path $repoRoot "README.md"
+$userGuidePath = Join-Path $repoRoot "使用说明.md"
+$agentExamplesRoot = Join-Path $repoRoot "examples\agent_bridge"
+$verifyScriptPath = Join-Path $repoRoot "tools\verify_release.ps1"
 $installerScriptPath = Join-Path $repoRoot "installer\QtDesktopPet.iss"
 
 Assert-RequiredPath -Path $resolvedExePath -Description "QtDesktopPet.exe"
+Assert-RequiredPath -Path $resolvedBridgeExePath -Description "QtDesktopPetBridge.exe (build target QtDesktopPetBridge or pass -BridgeExePath)"
 Assert-RequiredPath -Path (Join-Path $charactersRoot "shiroko\character.json") -Description "Default character package"
 Assert-RequiredPath -Path (Join-Path $iconsRoot "app_icon.ico") -Description "Application icon"
 Assert-RequiredPath -Path (Join-Path $soundsRoot "reminders\reminder_default.wav") -Description "Default reminder sound"
 Assert-RequiredPath -Path $licensePath -Description "LICENSE"
 Assert-RequiredPath -Path $readmePath -Description "README.md"
+Assert-RequiredPath -Path $userGuidePath -Description "Offline user guide"
+Assert-RequiredPath -Path $verifyScriptPath -Description "Release dependency verifier"
+$agentSupportFiles = @(
+    "README.md", "codex.hooks.json", "antigravity.hooks.json",
+    "dsh-cordis-plugin.js", "test_bridge.ps1"
+)
+foreach ($fileName in $agentSupportFiles) {
+    Assert-RequiredPath -Path (Join-Path $agentExamplesRoot $fileName) -Description "Agent setup asset"
+}
 
 $windeployQt = Resolve-WindeployQt -ExplicitPath $WindeployQtPath
+$webpBundle = if ($WebpRuntimeDir) {
+    Resolve-FullPath -Path $WebpRuntimeDir -BasePath (Get-Location)
+} else {
+    Join-Path $repoRoot "build\webp-runtime\bundle"
+}
+foreach ($requiredWebpFile in @("qwebp.dll", "dependency.json", "NOTICE.txt",
+    "libwebp-COPYING.txt", "libwebp-PATENTS.txt", "libwebp-AUTHORS.txt",
+    "LGPL-3.0-only.txt", "GPL-3.0-only.txt", "libwebp-source.tar.gz", "qtimageformats-source.zip", "build_webp_plugin.ps1")) {
+    Assert-RequiredPath -Path (Join-Path $webpBundle $requiredWebpFile) -Description "WebP runtime bundle (run tools/build_webp_plugin.ps1 or pass -WebpRuntimeDir)"
+}
 $isMsvcDeployment = (-not [string]::IsNullOrWhiteSpace($MsvcRuntimeDir)) -or
     ($windeployQt -match '(?i)[\\/]msvc[^\\/]*[\\/]bin[\\/]windeployqt\.exe$')
 $resolvedMsvcRuntimeDir = ""
@@ -307,11 +339,21 @@ if (Test-Path -LiteralPath $packageRoot) {
 New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
 
 Copy-Item -LiteralPath $resolvedExePath -Destination $targetExePath -Force
+Copy-Item -LiteralPath $resolvedBridgeExePath -Destination $targetBridgeExePath -Force
 Copy-DirectoryFresh -Source $charactersRoot -Destination (Join-Path $packageRoot "resources\characters")
 Copy-DirectoryFresh -Source $iconsRoot -Destination (Join-Path $packageRoot "resources\icons")
 Copy-DirectoryFresh -Source $soundsRoot -Destination (Join-Path $packageRoot "resources\sounds")
 Copy-Item -LiteralPath $licensePath -Destination (Join-Path $packageRoot "LICENSE") -Force
 Copy-Item -LiteralPath $readmePath -Destination (Join-Path $packageRoot "README.md") -Force
+Copy-Item -LiteralPath $userGuidePath -Destination (Join-Path $packageRoot "使用说明.md") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "CHANGELOG.md") -Destination $packageRoot
+$targetAgentExamplesRoot = Join-Path $packageRoot "examples\agent_bridge"
+New-Item -ItemType Directory -Force -Path $targetAgentExamplesRoot | Out-Null
+foreach ($fileName in $agentSupportFiles) {
+    Copy-Item -LiteralPath (Join-Path $agentExamplesRoot $fileName) -Destination $targetAgentExamplesRoot -Force
+}
+# Keep Qt plugin lookup relative to the installed application, never the build Kit.
+@("[Paths]", "Prefix=.", "Plugins=.") | Set-Content -LiteralPath (Join-Path $packageRoot "qt.conf") -Encoding ASCII
 
 Write-Host "Running windeployqt: $windeployQt"
 $windeployArguments = @("--release")
@@ -320,22 +362,51 @@ if ($isMsvcDeployment) {
 } else {
     $windeployArguments += "--compiler-runtime"
 }
-$windeployArguments += $targetExePath
+$windeployArguments += @($targetExePath, $targetBridgeExePath)
 Invoke-CheckedProcess -FilePath $windeployQt -Arguments $windeployArguments
+
+# Deploy the reviewed plugin after windeployqt; never fall back to an arbitrary
+# development PATH copy. Corresponding sources/notices travel with ZIP and installer.
+$webpNotices = Join-Path $packageRoot "third_party\webp"
+New-Item -ItemType Directory -Path $webpNotices,(Join-Path $packageRoot "imageformats") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $webpBundle "qwebp.dll") -Destination (Join-Path $packageRoot "imageformats\qwebp.dll") -Force
+Get-ChildItem -LiteralPath $webpBundle -File | Where-Object Name -ne "qwebp.dll" |
+    Copy-Item -Destination $webpNotices -Force
+$webpExample = Join-Path $packageRoot "examples\character_webp"
+New-Item -ItemType Directory -Path $webpExample -Force | Out-Null
+foreach ($file in @("README.md", "character.json", "runtime-probe.webp")) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "examples\character_webp\$file") -Destination $webpExample -Force
+}
+$videoExample = Join-Path $packageRoot "examples\character_alpha_video"
+New-Item -ItemType Directory -Path $videoExample -Force | Out-Null
+foreach ($file in @("README.md", "character.json", "runtime-probe.mp4")) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "examples\character_alpha_video\$file") -Destination $videoExample -Force
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot "examples\character_effects") -Destination (Join-Path $packageRoot "examples\character_effects") -Recurse
+New-Item -ItemType Directory -Path (Join-Path $packageRoot "docs") -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot "docs\character-package-v2.md") -Destination (Join-Path $packageRoot "docs") -Force
+Copy-Item -LiteralPath (Join-Path $repoRoot "docs\character-studio.md") -Destination (Join-Path $packageRoot "docs") -Force
 
 if ($isMsvcDeployment) {
     Write-Host "Deploying app-local MSVC runtime: $resolvedMsvcRuntimeDir"
     Copy-MsvcRuntime -SourceDirectory $resolvedMsvcRuntimeDir -DestinationDirectory $packageRoot
 }
 
+# Fail before producing a ZIP/installer if a runtime, plugin or Agent asset is missing.
+& $verifyScriptPath -PackageRoot $packageRoot -ReportPath (Join-Path $packageRoot "deployment-report.json")
+
 $manifestPath = Join-Path $packageRoot "package_manifest.txt"
 @(
     "QtDesktopPet release package",
     "Version: $Version",
     "CreatedUtc: $((Get-Date).ToUniversalTime().ToString("o"))",
-    "SourceExe: $resolvedExePath",
-    "Includes: QtDesktopPet.exe, Qt/compiler runtime, character/icon/sound resources, LICENSE, README.md",
-    "Excludes: tools, docs, reports, build, dist, .git"
+    "SourceExeSHA256: $((Get-FileHash -LiteralPath $resolvedExePath -Algorithm SHA256).Hash)",
+    "SourceBridgeExeSHA256: $((Get-FileHash -LiteralPath $resolvedBridgeExePath -Algorithm SHA256).Hash)",
+    "Includes: QtDesktopPet.exe, QtDesktopPetBridge.exe, Qt/compiler runtime, Qt plugins including qwebp and video backends, resources, examples/agent_bridge, examples/character_webp, examples/character_alpha_video, third_party/webp notices/sources/recipe, offline user guide, deployment-report.json, LICENSE, README.md",
+    "Excludes: developer tools, internal docs, reports, build, dist, .git, personal Agent configurations",
+    "External Agent clients are installed separately; the DSH plugin uses its host's Node runtime.",
+    "Verification: app-local normal/delay imports, x64 binaries, one Qt version, required plugins/assets, WebP dependency hashes and actual EXE WebP/H.264 alpha-video decoding plus bridge startup with empty PATH.",
+    "Clean-machine GUI/HTTPS/audio and installer acceptance remain separate release checks."
 ) | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
 if (-not $NoZip) {

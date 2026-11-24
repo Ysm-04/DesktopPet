@@ -1,12 +1,17 @@
 #include "ChatBubble.h"
 
+#include "MarkdownViewHelper.h"
+
+#include <QCursor>
 #include <QEvent>
 #include <QFrame>
 #include <QRect>
 #include <QScrollBar>
 #include <QSize>
-#include <QTextEdit>
+#include <QTextBrowser>
+#include <QTextCharFormat>
 #include <QTextDocument>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QtGlobal>
 
@@ -19,13 +24,34 @@ constexpr int BubblePaddingWidth = 28;
 constexpr int BubblePaddingHeight = 24;
 constexpr int BubbleWidthSafetyMargin = 12;
 
-QSizeF documentSizeForWidth(const QTextEdit *textEdit, const QString &message, int width)
+void configureDocument(
+    QTextDocument *document,
+    const QTextBrowser *browser,
+    const QString &message,
+    bool renderMarkdown)
+{
+    if (document == nullptr || browser == nullptr)
+    {
+        return;
+    }
+
+    document->setDefaultTextOption(browser->document()->defaultTextOption());
+    document->setDocumentMargin(browser->document()->documentMargin());
+    if (renderMarkdown)
+    {
+        MarkdownViewHelper::applyMarkdownToDocument(document, message, browser->font(), true);
+        return;
+    }
+
+    document->setDefaultStyleSheet(QString());
+    document->setDefaultFont(browser->font());
+    document->setPlainText(message);
+}
+
+QSizeF documentSizeForWidth(const QTextBrowser *browser, const QString &message, int width, bool renderMarkdown)
 {
     QTextDocument document;
-    document.setDefaultFont(textEdit->font());
-    document.setDefaultTextOption(textEdit->document()->defaultTextOption());
-    document.setPlainText(message);
-    document.setDocumentMargin(textEdit->document()->documentMargin());
+    configureDocument(&document, browser, message, renderMarkdown);
     document.setTextWidth(width);
     return document.size();
 }
@@ -33,23 +59,26 @@ QSizeF documentSizeForWidth(const QTextEdit *textEdit, const QString &message, i
 
 ChatBubble::ChatBubble(QWidget *parent)
     : QWidget(parent)
-    , m_textEdit(new QTextEdit(this))
+    , m_textBrowser(new QTextBrowser(this))
 {
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
 
-    m_textEdit->setReadOnly(true);
-    m_textEdit->setFrameShape(QFrame::NoFrame);
-    m_textEdit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    m_textEdit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_textEdit->setLineWrapMode(QTextEdit::WidgetWidth);
-    m_textEdit->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    m_textEdit->installEventFilter(this);
-    m_textEdit->viewport()->installEventFilter(this);
-    m_textEdit->verticalScrollBar()->installEventFilter(this);
-    m_textEdit->setStyleSheet(QStringLiteral(
-        "QTextEdit {"
+    m_textBrowser->setReadOnly(true);
+    m_textBrowser->setOpenExternalLinks(false);
+    m_textBrowser->setOpenLinks(false);
+    m_textBrowser->setFrameShape(QFrame::NoFrame);
+    m_textBrowser->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_textBrowser->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_textBrowser->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_textBrowser->setTextInteractionFlags(Qt::TextBrowserInteraction);
+    m_textBrowser->document()->setDocumentMargin(2.0);
+    m_textBrowser->installEventFilter(this);
+    m_textBrowser->viewport()->installEventFilter(this);
+    m_textBrowser->verticalScrollBar()->installEventFilter(this);
+    m_textBrowser->setStyleSheet(QStringLiteral(
+        "QTextBrowser {"
         "background: rgba(255, 255, 255, 232);"
         "color: #202124;"
         "border: 1px solid rgba(32, 33, 36, 48);"
@@ -71,7 +100,12 @@ ChatBubble::ChatBubble(QWidget *parent)
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(m_textEdit);
+    layout->addWidget(m_textBrowser);
+
+    connect(m_textBrowser, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
+        resetAutoHideTimer();
+        MarkdownViewHelper::openExternalUrlIfSafe(url);
+    });
 
     m_hideTimer.setSingleShot(true);
     connect(&m_hideTimer, &QTimer::timeout, this, [this]() {
@@ -79,26 +113,43 @@ ChatBubble::ChatBubble(QWidget *parent)
     });
 }
 
-void ChatBubble::showMessage(const QString &message, const QPoint &anchorPosition, int durationMs, bool scrollToBottom)
+void ChatBubble::showMessage(
+    const QString &message,
+    const QPoint &anchorPosition,
+    int durationMs,
+    bool scrollToBottom,
+    bool renderMarkdown)
 {
     m_anchorPosition = anchorPosition;
     m_autoHideDurationMs = durationMs;
     const QString trimmed = message.trimmed();
-    m_textEdit->setPlainText(trimmed);
+    m_textBrowser->clear();
+    m_textBrowser->setCurrentCharFormat(QTextCharFormat());
+    m_textBrowser->document()->setDefaultStyleSheet(QString());
+    m_textBrowser->document()->setDefaultFont(m_textBrowser->font());
+    m_textBrowser->viewport()->setCursor(Qt::IBeamCursor);
+    if (renderMarkdown)
+    {
+        MarkdownViewHelper::applyMarkdownToDocument(m_textBrowser->document(), trimmed, m_textBrowser->font(), true);
+    }
+    else
+    {
+        m_textBrowser->document()->setPlainText(trimmed);
+    }
 
-    const QSize bubbleSize = preferredBubbleSize(trimmed);
+    const QSize bubbleSize = preferredBubbleSize(trimmed, renderMarkdown);
     const int documentWidth = bubbleSize.width() - BubblePaddingWidth;
-    const QSizeF documentSize = documentSizeForWidth(m_textEdit, trimmed, documentWidth);
+    const QSizeF documentSize = documentSizeForWidth(m_textBrowser, trimmed, documentWidth, renderMarkdown);
     const bool needsVerticalScroll = documentSize.height() + BubblePaddingHeight > MaxBubbleHeight;
-    m_textEdit->setVerticalScrollBarPolicy(needsVerticalScroll ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
-    m_textEdit->setFixedSize(bubbleSize);
+    m_textBrowser->setVerticalScrollBarPolicy(needsVerticalScroll ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
+    m_textBrowser->setFixedSize(bubbleSize);
     setFixedSize(bubbleSize);
     updatePosition();
     show();
     raise();
 
-    m_textEdit->verticalScrollBar()->setValue(
-        scrollToBottom ? m_textEdit->verticalScrollBar()->maximum() : 0);
+    m_textBrowser->verticalScrollBar()->setValue(
+        scrollToBottom ? m_textBrowser->verticalScrollBar()->maximum() : 0);
 
     if (durationMs > 0)
     {
@@ -135,7 +186,9 @@ void ChatBubble::hideBubble()
 
 bool ChatBubble::eventFilter(QObject *watched, QEvent *event)
 {
-    if ((watched == m_textEdit || watched == m_textEdit->viewport() || watched == m_textEdit->verticalScrollBar())
+    if ((watched == m_textBrowser
+            || watched == m_textBrowser->viewport()
+            || watched == m_textBrowser->verticalScrollBar())
         && isUserInteractionEvent(event))
     {
         resetAutoHideTimer();
@@ -160,13 +213,10 @@ bool ChatBubble::isUserInteractionEvent(QEvent *event) const
     }
 }
 
-QSize ChatBubble::preferredBubbleSize(const QString &message) const
+QSize ChatBubble::preferredBubbleSize(const QString &message, bool renderMarkdown) const
 {
     QTextDocument singleLineDocument;
-    singleLineDocument.setDefaultFont(m_textEdit->font());
-    singleLineDocument.setDefaultTextOption(m_textEdit->document()->defaultTextOption());
-    singleLineDocument.setPlainText(message);
-    singleLineDocument.setDocumentMargin(m_textEdit->document()->documentMargin());
+    configureDocument(&singleLineDocument, m_textBrowser, message, renderMarkdown);
     singleLineDocument.setTextWidth(-1);
 
     const int singleLineWidth = qCeil(singleLineDocument.idealWidth())
@@ -174,13 +224,17 @@ QSize ChatBubble::preferredBubbleSize(const QString &message) const
         + BubbleWidthSafetyMargin;
     int preferredWidth = qBound(MinBubbleWidth, singleLineWidth, MaxBubbleWidth);
 
-    QSizeF documentSize = documentSizeForWidth(m_textEdit, message, preferredWidth - BubblePaddingWidth);
+    QSizeF documentSize = documentSizeForWidth(m_textBrowser, message, preferredWidth - BubblePaddingWidth, renderMarkdown);
     int preferredHeight = qCeil(documentSize.height()) + BubblePaddingHeight;
     if (preferredHeight > MaxBubbleHeight)
     {
-        const int scrollbarWidth = m_textEdit->verticalScrollBar()->sizeHint().width();
+        const int scrollbarWidth = m_textBrowser->verticalScrollBar()->sizeHint().width();
         preferredWidth = qMin(MaxBubbleWidth, preferredWidth + scrollbarWidth);
-        documentSize = documentSizeForWidth(m_textEdit, message, preferredWidth - BubblePaddingWidth - scrollbarWidth);
+        documentSize = documentSizeForWidth(
+            m_textBrowser,
+            message,
+            preferredWidth - BubblePaddingWidth - scrollbarWidth,
+            renderMarkdown);
         preferredHeight = qCeil(documentSize.height()) + BubblePaddingHeight;
     }
 

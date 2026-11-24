@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "id": "webp-runtime-example",
+  "displayName": "WebP 示例方块",
+  "defaultState": "idle",
+  "base": {"width": 128, "height": 96, "scale": 1.0},
+  "states": {
+    "idle": {
+      "media": {"type": "webp", "path": "runtime-probe.webp"},
+      "loop": true
+    }
+  }
+}

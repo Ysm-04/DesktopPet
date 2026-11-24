@@ -215,9 +215,20 @@ QUrl OpenAICompatibleProvider::requestUrl() const
         baseUrl.chop(1);
     }
 
+    if (path.isEmpty())
+    {
+        path = QStringLiteral("/chat/completions");
+    }
+
     if (!path.startsWith(QLatin1Char('/')))
     {
         path.prepend(QLatin1Char('/'));
+    }
+
+    if (baseUrl.endsWith(QStringLiteral("/chat/completions"), Qt::CaseInsensitive)
+        && path.compare(QStringLiteral("/chat/completions"), Qt::CaseInsensitive) == 0)
+    {
+        return QUrl(baseUrl);
     }
 
     return QUrl(baseUrl + path);
@@ -287,7 +298,7 @@ bool OpenAICompatibleProvider::handleStreamPayload(const QByteArray &payload)
     }
 
     const QJsonObject root = document.object();
-    if (root.contains(QStringLiteral("error")))
+    if (AIDiagnostics::hasErrorPayload(root))
     {
         const QString bodyError = AIDiagnostics::errorMessageFromBody(payload);
         finishWithError(bodyError.isEmpty() ? QStringLiteral("AI stream returned an error.") : bodyError);

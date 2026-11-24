@@ -17,6 +17,18 @@ struct CityAlias
     QString countryCode;
 };
 
+bool isAsciiText(const QString &text)
+{
+    for (const QChar ch : text)
+    {
+        if (ch.unicode() > 127)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 QString compactKey(QString text)
 {
     text = text.trimmed().toLower();
@@ -239,22 +251,59 @@ WeatherLocationSearch WeatherLocationResolver::resolveSearch(const QString &city
 
     if (result.countryCode.isEmpty())
     {
-        const QString compactCityName = compactKey(cityName);
         for (const auto &alias : countryAliases())
         {
-            const QString aliasKey = compactKey(alias.first);
-            if (compactCityName.startsWith(aliasKey) && compactCityName.size() > aliasKey.size() + 1)
+            const QString aliasText = alias.first.trimmed();
+            if (aliasText.isEmpty() || cityName.size() <= aliasText.size() + 1)
+            {
+                continue;
+            }
+
+            if (isAsciiText(aliasText))
+            {
+                if (cityName.startsWith(aliasText, Qt::CaseInsensitive)
+                    && cityName.at(aliasText.size()).isSpace())
+                {
+                    result.countryCode = alias.second;
+                    cityName = cityName.mid(aliasText.size()).trimmed();
+                    break;
+                }
+                if (cityName.endsWith(aliasText, Qt::CaseInsensitive)
+                    && cityName.at(cityName.size() - aliasText.size() - 1).isSpace())
+                {
+                    result.countryCode = alias.second;
+                    cityName = cityName.left(cityName.size() - aliasText.size()).trimmed();
+                    break;
+                }
+                continue;
+            }
+
+            if (cityName.startsWith(aliasText, Qt::CaseInsensitive)
+                && cityName.mid(aliasText.size()).trimmed().size() >= 2)
             {
                 result.countryCode = alias.second;
-                cityName = compactCityName.mid(aliasKey.size());
+                cityName = cityName.mid(aliasText.size()).trimmed();
                 break;
             }
-            if (compactCityName.endsWith(aliasKey) && compactCityName.size() > aliasKey.size() + 1)
+            if (cityName.endsWith(aliasText, Qt::CaseInsensitive)
+                && cityName.left(cityName.size() - aliasText.size()).trimmed().size() >= 2)
             {
                 result.countryCode = alias.second;
-                cityName = compactCityName.left(compactCityName.size() - aliasKey.size());
+                cityName = cityName.left(cityName.size() - aliasText.size()).trimmed();
                 break;
             }
+        }
+    }
+
+    static const QRegularExpression domesticProvinceCityRegex(
+        QStringLiteral("^[\\x{4e00}-\\x{9fff}]{2,8}(?:省|自治区|特别行政区)([\\x{4e00}-\\x{9fff}]{2,8}市?)$"));
+    const QRegularExpressionMatch provinceCityMatch = domesticProvinceCityRegex.match(cityName);
+    if (provinceCityMatch.hasMatch())
+    {
+        cityName = provinceCityMatch.captured(1).trimmed();
+        if (result.countryCode.isEmpty())
+        {
+            result.countryCode = QStringLiteral("CN");
         }
     }
 

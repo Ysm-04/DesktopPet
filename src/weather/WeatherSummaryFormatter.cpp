@@ -184,24 +184,49 @@ QString WeatherSummaryFormatter::format(const WeatherReport &report) const
         {
             return message + QStringLiteral("天气数据缺少目标日期预报，暂时无法生成结果。");
         }
-        const QString dayName = report.query.dateOffset == 0
-            ? QStringLiteral("今天")
-            : (report.query.dateOffset == 1 ? QStringLiteral("明天") : QStringLiteral("后天"));
+        QString dayName;
+        switch (report.query.dateOffset)
+        {
+        case 0:
+            dayName = QStringLiteral("今天");
+            break;
+        case 1:
+            dayName = QStringLiteral("明天");
+            break;
+        case 2:
+            dayName = QStringLiteral("后天");
+            break;
+        case 3:
+            dayName = QStringLiteral("大后天");
+            break;
+        default:
+            dayName = daily->date.toString(QStringLiteral("MM-dd"));
+            break;
+        }
         return message + QStringLiteral("%1%2天气：%3。")
             .arg(locationDisplayName(report.location), dayName, dailyText(*daily, daily->date.toString(QStringLiteral("MM-dd"))).section(QStringLiteral("："), 1));
     }
 
     QStringList lines;
-    const int count = qMin(report.query.forecastDays, report.dailyForecasts.size());
-    for (int index = 0; index < count; ++index)
+    const int totalDays = static_cast<int>(report.dailyForecasts.size());
+    const int startIndex = qBound(0, report.query.dateOffset, totalDays);
+    const int count = qMin(report.query.forecastDays, qMax(0, totalDays - startIndex));
+    for (int offset = 0; offset < count; ++offset)
     {
-        const WeatherDailyForecast &daily = report.dailyForecasts.at(index);
+        const WeatherDailyForecast &daily = report.dailyForecasts.at(startIndex + offset);
         lines.append(dailyText(daily, daily.date.toString(QStringLiteral("MM-dd"))));
     }
 
     if (lines.isEmpty())
     {
         return message + QStringLiteral("天气数据缺少未来预报，暂时无法生成结果。");
+    }
+
+    if (startIndex == 1 && count == 2)
+    {
+        return message
+            + QStringLiteral("%1明后 2 天天气：\n%2。")
+                .arg(locationDisplayName(report.location), lines.join(QStringLiteral("\n")));
     }
 
     return message
@@ -279,6 +304,8 @@ QString WeatherSummaryFormatter::windDirectionText(double degree)
         QStringLiteral("西风"),
         QStringLiteral("西北风"),
     };
-    const int index = static_cast<int>(qRound(degree / 45.0)) % directions.size();
+    const int size = static_cast<int>(directions.size());
+    const int rawIndex = static_cast<int>(qRound(degree / 45.0));
+    const int index = ((rawIndex % size) + size) % size;
     return directions.at(index);
 }
