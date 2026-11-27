@@ -6,7 +6,13 @@ QtDesktopPet 是一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物�
 
 > 当前项目仍在持续完善。角色素材、图标和音效的授权独立于源码许可证，再分发前请确认对应权限。
 
-![桌宠预览](resources/characters/shiroko/preview.png)
+| 多 Agent 并行胶囊与角色气泡 | Agent 待确认提醒与状态联动 |
+| :---: | :---: |
+| <img src="resources/readme/shiroko-multi-agents.png" alt="多 Agent 并行胶囊与角色气泡" height="260" /> | <img src="resources/readme/shiroko-agent-confirm.jpg" alt="Agent 待确认提醒与状态联动" height="260" /> |
+
+| Gemini | DeepSeek | GPT | Grok |
+| :---: | :---: | :---: | :---: |
+| ![Gemini 待机预览](resources/readme/gemini-idle.png) | ![DeepSeek 待机预览](resources/readme/deepseek-idle.png) | ![GPT 待机预览](resources/readme/gpt-idle.png) | ![Grok 待机预览](resources/readme/grok-idle.png) |
 
 ## 主要功能
 
@@ -194,6 +200,7 @@ AI 对话和联网请求发送到用户配置的服务商接口。API 密钥与�
 ├── resources/
 │   ├── characters/            # 内置角色包
 │   ├── icons/                 # 图标
+│   ├── readme/                # README 展示截图与角色预览图
 │   └── sounds/                # 音效
 ├── src/
 │   ├── agent_bridge/          # Agent 状态通道、消息编解码、会话管理和桥接程序
