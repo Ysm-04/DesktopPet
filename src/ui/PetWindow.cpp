@@ -263,6 +263,29 @@ QString webCitationListText(const QVector<WebCitation> &citations)
     return lines.join(QStringLiteral("\n"));
 }
 
+QString stripWebStatusNoticeFooter(QString text)
+{
+    static const QStringList notices = {
+        QStringLiteral("（模型未使用联网来源）"),
+        QStringLiteral("（模型使用了联网能力，但未返回可展示来源）"),
+    };
+    bool stripped = true;
+    while (stripped)
+    {
+        stripped = false;
+        text = text.trimmed();
+        for (const QString &notice : notices)
+        {
+            if (text.endsWith(notice))
+            {
+                text.chop(notice.size());
+                stripped = true;
+            }
+        }
+    }
+    return text.trimmed();
+}
+
 }
 
 PetWindow::PetWindow(QWidget *parent)
@@ -313,7 +336,13 @@ PetWindow::PetWindow(QWidget *parent, const AppConfig &initialConfig)
         Logger::warning(QStringLiteral("Animation playback failed: state=%1 reason=%2").arg(state, error));
         showBubbleMessage(QStringLiteral("动画播放失败：") + error);
         if (state != QStringLiteral("idle"))
-            playResolvedState(m_stateMachine.requestState(QStringLiteral("idle"), StateRequestSource::System), false);
+        {
+            const QString fallbackState = m_stateMachine.requestState(QStringLiteral("idle"), StateRequestSource::System);
+            if (!fallbackState.isEmpty() && fallbackState != state)
+            {
+                playResolvedState(fallbackState, false);
+            }
+        }
     });
 
     m_idleBehaviorTimer.setSingleShot(true);
@@ -357,6 +386,12 @@ PetWindow::PetWindow(QWidget *parent, const AppConfig &initialConfig)
     m_agentPruneTimer.setInterval(1000);
     connect(&m_agentPruneTimer, &QTimer::timeout, this, [this]() {
         pruneExpiredExternalAgentSessions();
+    });
+
+    m_badgeFallbackTimer.setSingleShot(true);
+    connect(&m_badgeFallbackTimer, &QTimer::timeout, this, [this]() {
+        m_fallbackBadgeState.clear();
+        syncBadgeLogicalState();
     });
 
     QPointer<PetWindow> window(this);
@@ -511,6 +546,7 @@ void PetWindow::applyAppConfig(const AppConfig &config)
         m_petView->configureEffects(m_characterPackage.effects, m_appConfig.enableCharacterEffects, isLowPowerMode());
         m_petView->effects().setState(m_stateMachine.currentState());
         m_petView->effects().setPresented(isVisible());
+        syncBadgeLogicalState();
         resize(m_petView->sizeHint());
         updateBubblePosition();
     }
@@ -1407,9 +1443,10 @@ bool PetWindow::submitWebChatMessage(const QString &message)
 
         window->playState(QStringLiteral("talk"), false);
         const QString displayText = window->formatWebChatResponseForDisplay(response);
+        const QString historyText = window->formatWebChatResponseForHistory(response);
         if (window->m_conversationManager)
         {
-            window->m_conversationManager->appendExternalExchange(chatMessage, displayText);
+            window->m_conversationManager->appendExternalExchange(chatMessage, historyText);
         }
         window->saveConversationHistoryIfNeeded();
         window->refreshChatHistoryPanel();
@@ -1427,7 +1464,7 @@ bool PetWindow::hasActiveWebRequest() const
 
 QString PetWindow::formatWebChatResponseForDisplay(const WebChatResponse &response) const
 {
-    QString message = response.content.trimmed();
+    QString message = stripWebStatusNoticeFooter(response.content);
     if (message.isEmpty())
     {
         message = QStringLiteral("联网请求已完成，但没有返回内容。");
@@ -1451,6 +1488,24 @@ QString PetWindow::formatWebChatResponseForDisplay(const WebChatResponse &respon
     else
     {
         message += QStringLiteral("\n\n（模型使用了联网能力，但未返回可展示来源）");
+    }
+
+    return message;
+}
+
+QString PetWindow::formatWebChatResponseForHistory(const WebChatResponse &response) const
+{
+    QString message = stripWebStatusNoticeFooter(response.content);
+    if (message.isEmpty())
+    {
+        message = QStringLiteral("联网请求已完成，但没有返回内容。");
+    }
+
+    WebStore webStore;
+    const WebConfig webConfig = webStore.load();
+    if (webConfig.showCitations && !response.citations.isEmpty())
+    {
+        message += QStringLiteral("\n\n**来源：**\n") + webCitationListText(response.citations);
     }
 
     return message;
@@ -2111,6 +2166,7 @@ void PetWindow::finishStreamingChat()
     }
     m_streamingChatActive = false;
     m_streamingTalkStarted = false;
+    syncBadgeLogicalState();
     scheduleAnimationPrewarm();
 }
 
@@ -2121,6 +2177,7 @@ void PetWindow::cancelStreamingChat()
     m_streamingAssistantText.clear();
     m_streamingChatActive = false;
     m_streamingTalkStarted = false;
+    syncBadgeLogicalState();
     scheduleAnimationPrewarm();
 }
 
@@ -2348,6 +2405,8 @@ void PetWindow::loadInitialImage()
 
 bool PetWindow::loadCharacterPackage(const QString &characterId, bool centerWindow)
 {
+    m_badgeFallbackTimer.stop();
+    m_fallbackBadgeState.clear();
     const QString requestedCharacterId = CharacterPackageRepository::hasPackage(characterId)
         ? characterId
         : CharacterPackageRepository::defaultCharacterId();
@@ -2375,10 +2434,12 @@ bool PetWindow::loadCharacterPackage(const QString &characterId, bool centerWind
     if (m_clips.contains(QStringLiteral("idle")))
     {
         playResolvedState(m_stateMachine.start(), centerWindow);
+        syncBadgeLogicalState();
         return true;
     }
 
     setDisplayImage(CharacterPackageRepository::previewPath(m_appConfig.characterId), centerWindow);
+    syncBadgeLogicalState();
     return !m_characterPackage.states.isEmpty();
 }
 
@@ -2395,6 +2456,7 @@ void PetWindow::refreshActiveCharacterPersona()
         activeId = m_appConfig.characterId.trimmed();
     }
 
+    m_conversationManager->setCurrentCharacterId(activeId);
     const CharacterPersonaStore personaStore(ConfigManager().characterPersonasPath());
     const ResolvedCharacterPersona resolved = personaStore.resolvePersona(activeId, m_characterPackage.persona);
     m_conversationManager->setCharacterPersona(resolved.persona);
@@ -2514,7 +2576,64 @@ QRect PetWindow::visiblePetGeometry() const
 
 void PetWindow::playState(const QString &stateName, bool centerWindow)
 {
+    updateFallbackBadgeForRequest(stateName);
     playResolvedState(m_stateMachine.requestState(stateName), centerWindow);
+    syncBadgeLogicalState();
+}
+
+void PetWindow::updateFallbackBadgeForRequest(const QString &requestedState)
+{
+    const bool isBadgeState = requestedState == QStringLiteral("think")
+        || requestedState == QStringLiteral("sleep")
+        || requestedState == QStringLiteral("error");
+    if (!isBadgeState || m_clips.contains(requestedState))
+    {
+        m_badgeFallbackTimer.stop();
+        m_fallbackBadgeState.clear();
+        return;
+    }
+
+    m_fallbackBadgeState = requestedState;
+    if (requestedState == QStringLiteral("think") && pendingLocalAnimationState() == QStringLiteral("think"))
+    {
+        m_badgeFallbackTimer.stop();
+        return;
+    }
+
+    m_badgeFallbackTimer.start(requestedState == QStringLiteral("error") ? 3000 : 4000);
+}
+
+void PetWindow::syncBadgeLogicalState()
+{
+    if (!m_petView)
+    {
+        return;
+    }
+
+    const QString animatorState = m_frameAnimator.currentStateName();
+    if (animatorState == QStringLiteral("think")
+        || animatorState == QStringLiteral("sleep")
+        || animatorState == QStringLiteral("error"))
+    {
+        m_petView->effects().setBadgeState(QString());
+        return;
+    }
+
+    if ((pendingLocalAnimationState() == QStringLiteral("think")
+         || (!hasBlockingLocalActivityForAgent() && isVisible() && m_hasWorkingExternalSession))
+        && !m_clips.contains(QStringLiteral("think")))
+    {
+        m_petView->effects().setBadgeState(QStringLiteral("think"));
+        return;
+    }
+
+    if (!m_fallbackBadgeState.isEmpty() && !m_clips.contains(m_fallbackBadgeState))
+    {
+        m_petView->effects().setBadgeState(m_fallbackBadgeState);
+        return;
+    }
+
+    m_petView->effects().setBadgeState(QString());
 }
 
 void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
@@ -2564,13 +2683,29 @@ void PetWindow::playResolvedState(const QString &stateName, bool centerWindow)
     const bool wasLoaded = clip->isLoaded();
     if (!clip->ensureLoaded())
     {
+        const QString errorReason = clip->errorString();
         m_petView->effects().setState(QStringLiteral("error"));
-        Logger::warning(QStringLiteral("Animation state failed to load: state=%1 reason=%2").arg(stateName, clip->errorString()));
-        if (!clip->errorString().isEmpty())
-            showBubbleMessage(QStringLiteral("动画加载失败：") + clip->errorString());
+        Logger::warning(QStringLiteral("Animation state failed to load: state=%1 reason=%2").arg(stateName, errorReason));
         m_frameAnimator.stop();
+        if (stateName == QStringLiteral("idle"))
+        {
+            const QString previewPath = !m_characterPackage.previewPath.isEmpty()
+                ? m_characterPackage.previewPath
+                : CharacterPackageRepository::previewPath(m_appConfig.characterId);
+            setDisplayImage(previewPath, centerWindow);
+        }
+        if (!errorReason.isEmpty())
+        {
+            showBubbleMessage(QStringLiteral("动画加载失败：") + errorReason);
+        }
         if (stateName != QStringLiteral("idle"))
-            playResolvedState(m_stateMachine.requestState(QStringLiteral("idle"), StateRequestSource::System), false);
+        {
+            const QString fallbackState = m_stateMachine.requestState(QStringLiteral("idle"), StateRequestSource::System);
+            if (!fallbackState.isEmpty() && fallbackState != stateName)
+            {
+                playResolvedState(fallbackState, false);
+            }
+        }
         return;
     }
 
@@ -2950,8 +3085,8 @@ void PetWindow::scheduleIdleBehavior()
     }
 
     const int idleDelayMs = isLowPowerMode()
-        ? QRandomGenerator::global()->bounded(16000, 30001)
-        : QRandomGenerator::global()->bounded(8000, 16001);
+        ? QRandomGenerator::global()->bounded(180000, 300001)
+        : QRandomGenerator::global()->bounded(90000, 180001);
     m_idleBehaviorTimer.start(idleDelayMs);
 }
 
@@ -2971,8 +3106,6 @@ void PetWindow::playIdleBehavior()
 
     QStringList candidateStates;
     const QStringList preferredStates = {
-        QStringLiteral("think"),
-        QStringLiteral("sleep"),
         QStringLiteral("happy"),
     };
 
@@ -3003,6 +3136,7 @@ void PetWindow::returnToIdleFromBehavior()
         {
             playResolvedState(m_stateMachine.requestState(heldState, StateRequestSource::System), false);
         }
+        syncBadgeLogicalState();
         return;
     }
 
@@ -3011,9 +3145,13 @@ void PetWindow::returnToIdleFromBehavior()
         if (shouldHoldExternalWorkingState() && m_clips.contains(QStringLiteral("think")))
         {
             playResolvedState(m_stateMachine.requestState(QStringLiteral("think"), StateRequestSource::Automatic), false);
+            syncBadgeLogicalState();
             return;
         }
+        m_badgeFallbackTimer.stop();
+        m_fallbackBadgeState.clear();
         playResolvedState(m_stateMachine.finishState(QStringLiteral("idle")), false);
+        syncBadgeLogicalState();
     }
 }
 
@@ -3355,6 +3493,7 @@ void PetWindow::syncExternalAgentPresentation(
             }
         }
     }
+    syncBadgeLogicalState();
 
     if (!stateTransitioned || transitionSession == nullptr || !m_appConfig.enableAgentBridge)
     {

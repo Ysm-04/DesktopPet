@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(QtDesktopPet VERSION 0.3.0 LANGUAGES CXX)
+project(QtDesktopPet VERSION 0.3.1 LANGUAGES CXX)
 
 # Some Chinese MSVC/CMake combinations misdecode the detected /showIncludes
 # prefix. Ninja then misses header dependencies and can mix incompatible ABIs.
@@ -181,10 +181,15 @@ set_target_properties(QtDesktopPet PROPERTIES
 )
 set(PET_WEBP_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/webp-runtime/bundle" CACHE PATH
     "Prepared matching WebP runtime bundle (tools/build_webp_plugin.ps1)")
-if (WIN32 AND EXISTS "${PET_WEBP_RUNTIME_DIR}/qwebp.dll")
+set(_pet_effective_webp_dir "${PET_WEBP_RUNTIME_DIR}")
+if (WIN32 AND NOT EXISTS "${_pet_effective_webp_dir}/qwebp.dll"
+    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/build/b3-webp-deps/bundle/qwebp.dll")
+    set(_pet_effective_webp_dir "${CMAKE_CURRENT_SOURCE_DIR}/build/b3-webp-deps/bundle")
+endif()
+if (WIN32 AND EXISTS "${_pet_effective_webp_dir}/qwebp.dll")
     add_custom_command(TARGET QtDesktopPet POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_FILE_DIR:QtDesktopPet>/imageformats"
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${PET_WEBP_RUNTIME_DIR}/qwebp.dll"
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_pet_effective_webp_dir}/qwebp.dll"
             "$<TARGET_FILE_DIR:QtDesktopPet>/imageformats/qwebp.dll"
         VERBATIM
     )

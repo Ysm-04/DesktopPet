@@ -1,6 +1,6 @@
 # QtDesktopPet
 
-当前版本：**v0.3.0**。安装器、便携版和独立角色工坊分别提供完整运行依赖。
+当前版本：**v0.3.1**。安装器、便携版和独立角色工坊分别提供完整运行依赖。
 
 QtDesktopPet 是一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物，也是 **Codex、Google Antigravity、DeepSeek Harness（DSH）等编程 Agent 的本地状态展示窗口**。多个 Agent 同时工作时，每种来源显示一个胶囊，展开后按「Agent → 对话 → 命令与工具活动」查看进展，并通过角色状态和气泡提示待确认、暂停、完成或异常。桌宠还提供 AI 对话、AI 原生联网、本地提醒、天气查询、多种角色动画，以及制作角色素材的独立角色工坊。
 
@@ -12,8 +12,8 @@ QtDesktopPet 是一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物�
 
 - 透明无边框桌宠窗口，支持拖动、置顶、托盘隐藏和单实例唤醒。
 - 兼容 v1 PNG 与 v2 PNG、动态 WebP、透明视频角色包，支持待机、说话、思考、睡眠、开心、拖拽、异常等状态。
-- 角色包导入、切换、导出和用户角色目录管理。
-- AI 对话：兼容 OpenAI 的接口、Google Gemini、DeepSeek 和自定义服务商；支持流式输出、取消请求和对话历史，在 Windows 上使用 DPAPI 加密保存 API 密钥。
+- 角色包导入、切换、导出和用户角色目录管理；支持角色包内置专属人设（`persona`）与 13 组零 Token 互动/关怀/Agent 状态台词，切换角色时自动隔离多轮上下文避免串台。
+- AI 对话：兼容 OpenAI 的接口、Google Gemini、DeepSeek 和自定义服务商；支持流式输出、取消请求、对话历史按需检索召回与本地长期记忆（自动提炼及手动管理），在 Windows 上使用 DPAPI 加密保存 API 密钥。
 - AI 原生联网：支持 OpenAI 搜索工具、Google 搜索增强及 DeepSeek 官方联网工具；中转站可手动选择协议，并测试是否真正触发服务端搜索。
 - 本地提醒：一次性或每天、每周、每月重复提醒，支持音效导入与试听；桌宠隐藏或 AI 忙碌时使用系统通知。
 - 天气查询：天气预报、城市名解析、默认城市及公网 IP 定位回退，支持数据源故障切换和定位缓存。
@@ -27,18 +27,37 @@ QtDesktopPet 是一个基于 **Qt 6 Widgets / C++17** 的 Windows 桌面宠物�
 
 ## 下载与开始使用
 
-普通用户可在本仓库的版本发布页面下载对应文件：
+普通用户可在本仓库的 [版本发布页面](https://github.com/Ysm-04/DesktopPet/releases) 下载对应文件：
 
 | 文件 | 用途 |
 | --- | --- |
-| `QtDesktopPet-0.3.0-windows-x64-setup.exe` | 安装版，按向导安装桌宠 |
-| `QtDesktopPet-0.3.0-windows-x64.zip` | 便携版，完整解压后运行 `QtDesktopPet.exe` |
-| `QtDesktopPet-CharacterStudio-0.3.0-windows-x64.zip` | 独立角色工坊，供制作或转换角色素材使用 |
+| `QtDesktopPet-0.3.1-windows-x64-setup.exe` | 安装版，按向导安装桌宠 |
+| `QtDesktopPet-0.3.1-windows-x64.zip` | 便携版，完整解压后运行 `QtDesktopPet.exe` |
+| `QtDesktopPet-CharacterStudio-0.3.1-windows-x64.zip` | 独立角色工坊，供制作或转换角色素材使用 |
 | `SHA256SUMS.txt` | 下载文件的 SHA256 校验值 |
 
 发布包自带运行库和插件，**无需安装 Qt、Visual Studio、CMake、Python、FFmpeg 或单独的 Node.js**。外部 Agent 客户端需自行安装和配置。不要在压缩包内直接运行程序，也不要只复制单个 EXE。
 
 首次运行后，右键桌宠打开设置；托盘图标可显示、隐藏或退出桌宠。完整步骤见 [安装与使用说明](使用说明.md)。
+
+## 可选扩展角色包
+
+为主安装包保持轻量，程序默认仅内置 `shiroko` 角色。如希望体验更多风格角色，可在 **[可选角色扩展包发布页（`character-packs`）](https://github.com/Ysm-04/DesktopPet/releases/tag/character-packs)** 按需下载（推荐配合 **QtDesktopPet v0.3.1+** 使用）：
+
+| 角色包 | 压缩包 | 风格与媒体配置 |
+| --- | --- | --- |
+| **Gemini** | `QtDesktopPet-Character-gemini-1.0.0.zip` | 四芒星猫耳异色瞳少女；单帧安静待机 + 微呼吸 + 6 组无损 Animated WebP 状态、专属人设与 13 组离线台词 |
+| **DeepSeek** | `QtDesktopPet-Character-deepseek-1.0.0.zip` | 深蓝女仆鲸鱼娘（大肥鱼）；单帧安静待机 + `4.5–9s` 随机眨眼 + 微呼吸 + 6 组无损 WebP 状态、专属人设与台词 |
+| **GPT** | `QtDesktopPet-Character-gpt-1.0.0.zip` | 银发白龙御姐；统一画布等比渲染、单帧安静待机 + `4.5–9s` 随机眨眼 + 微呼吸 + 6 组无损 WebP 状态、专属人设与台词 |
+| **Grok** | `QtDesktopPet-Character-grok-1.0.0.zip` | 小王冠金发哥特小恶魔女王；统一画布等比渲染、单帧安静待机 + `4.5–9s` 随机眨眼 + 微呼吸 + 6 组无损 WebP 状态、专属人设与台词 |
+
+### 导入方式
+
+1. 下载并完整解压角色压缩包，确认得到直接包含 `character.json` 的角色文件夹（如 `deepseek\`）。
+2. 打开桌宠 **设置 → 角色 → 导入角色文件夹**，选中该角色文件夹。
+3. 导入通过后，在「当前角色」下拉框中切换并保存设置即可使用。
+
+> **角色包授权与署名声明（CC BY-NC-SA 4.0）**：上述 4 款扩展角色包的美术立绘改编自开源项目 **[lokicorvus/crosspet](https://github.com/lokicorvus/crosspet)**（其中 DeepSeek 原型「溟月」由 **上善无形** 创作、深蓝女仆鲸鱼娘由 B 站 **ZipZipPipe** 二创；GPT「御姐白龙」与 Grok「哥特小恶魔女王」形象出自 B 站 **ZipZipPipe**；Gemini 参考社区同人设定），遵循 **[知识共享 署名-非商业性使用-相同方式共享 4.0（CC BY-NC-SA 4.0）](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)** 协议发布，独立于本仓库源码 MIT 许可证，**不得用于任何商业用途**；所涉产品名称及标识均为各自公司注册商标，非官方联名作品。各包内均附完整 `LICENSE.md` 与 `README.md`。
 
 ## Agent 联动配置
 
@@ -57,7 +76,7 @@ Codex 手动停止输出需要客户端支持并信任 `Interrupt` Hook。升级
 
 ## 角色工坊：从素材到桌宠
 
-角色工坊是独立程序，普通桌宠安装包不包含它。请另外下载并完整解压 `QtDesktopPet-CharacterStudio-0.3.0-windows-x64.zip`，运行 `QtDesktopPetCharacterStudio.exe`；不要只拷贝 EXE，也不要删除同目录的 `encoder/`、DLL 和插件。
+角色工坊是独立程序，普通桌宠安装包不包含它。请另外下载并完整解压 `QtDesktopPet-CharacterStudio-0.3.1-windows-x64.zip`，运行 `QtDesktopPetCharacterStudio.exe`；不要只拷贝 EXE，也不要删除同目录的 `encoder/`、DLL 和插件。
 
 以一组透明 PNG 待机动画为例：
 
@@ -148,7 +167,9 @@ AI 对话和联网请求发送到用户配置的服务商接口。API 密钥与�
 | --- | --- |
 | `ai_config.json` | AI 服务配置 |
 | `app_config.json` | 应用设置 |
+| `character_personas.json` | 用户自定义角色人设覆盖 |
 | `conversation_history.json` | 对话历史 |
+| `long_term_memory.json` | 本地长期记忆条目 |
 | `reminders.json` | 提醒记录 |
 | `weather_config.json` | 天气配置 |
 | `web_config.json` | 联网模式配置 |
@@ -246,6 +267,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools/prepare_github_export.
 
 ## 版本状态与许可证
 
-v0.3.0 的更新和验收边界见 [更新记录](CHANGELOG.md)。短时回归不能代替长期稳定性；干净 Windows、安装升级卸载及完整人工视觉验收尚未完成。安装器未签名，Windows SmartScreen 可能提示未知发布者。
+v0.3.1 的更新和验收边界见 [更新记录](CHANGELOG.md)。短时回归不能代替长期稳定性；干净 Windows、安装升级卸载及完整人工视觉验收尚未完成。安装器未签名，Windows SmartScreen 可能提示未知发布者。
 
 源码采用 MIT 许可证，详见 [许可证](LICENSE)。角色素材、图标、音效及随包第三方组件分别遵循各自授权与许可。

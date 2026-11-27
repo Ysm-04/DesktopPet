@@ -11,6 +11,7 @@ struct ChatMessage
     QDateTime timestamp;
     QString provider;
     QString model;
+    QString characterId;
 };
 
 struct ChatRequest

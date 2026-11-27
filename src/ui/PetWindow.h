@@ -92,6 +92,7 @@ private:
     bool handleWeatherChatMessage(const QString &message);
     bool hasActiveWebRequest() const;
     QString formatWebChatResponseForDisplay(const WebChatResponse &response) const;
+    QString formatWebChatResponseForHistory(const WebChatResponse &response) const;
     void refreshChatInputWebToggle();
     void saveWebTogglePreference(bool webEnabled);
     void handleTriggeredReminder(const ReminderItem &item);
@@ -128,6 +129,8 @@ private:
     QRect visiblePetGeometry() const;
     void playState(const QString &stateName, bool centerWindow);
     void playResolvedState(const QString &stateName, bool centerWindow);
+    void updateFallbackBadgeForRequest(const QString &requestedState);
+    void syncBadgeLogicalState();
     QSize animationTargetSize() const;
     int effectiveAnimationFps(int fps) const;
     bool isLowPowerMode() const;
@@ -195,6 +198,7 @@ private:
     QTimer m_startupGreetingTimer;
     QTimer m_proactiveCareTimer;
     QTimer m_agentPruneTimer;
+    QTimer m_badgeFallbackTimer;
     QElapsedTimer m_interactionClock;
     AppConfig m_appConfig;
     CharacterPackage m_characterPackage;
@@ -212,6 +216,7 @@ private:
     QPoint m_leftPressGlobalPos;
     QPoint m_pendingTapGlobalPos;
     QString m_streamingAssistantText;
+    QString m_fallbackBadgeState;
     QStringList m_animationPrewarmQueue;
     QVector<ReminderItem> m_pendingVisibleTriggeredReminders;
     ReminderItem m_activeTriggeredReminder;

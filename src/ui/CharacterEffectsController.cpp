@@ -11,6 +11,7 @@ void CharacterEffectsController::configure(const CharacterEffectSpec &spec, bool
 {
     m_timer.stop();
     m_spec = spec; m_enabled = enabled; m_lowPower = lowPower;
+    m_badgeState.clear();
     m_angle = 0; m_releaseMs = -1; m_dragging = m_haveDragPosition = m_closed = false;
     m_clock.restart(); scheduleBlink(); refresh();
     if (changed) changed();
@@ -25,6 +26,12 @@ void CharacterEffectsController::setState(const QString &state)
     if (m_state == state) return;
     m_state = state; m_closed = false; scheduleBlink(); refresh();
     if (changed) changed();
+}
+void CharacterEffectsController::setBadgeState(const QString &state)
+{
+    if (m_badgeState == state) return;
+    m_badgeState = state;
+    if (changed && active() && m_spec.statusBadge) changed();
 }
 void CharacterEffectsController::setAttention(bool attention)
 {
@@ -95,9 +102,10 @@ CharacterEffectPose CharacterEffectsController::pose() const
     p.angle = m_angle; p.closed = m_closed;
     if (m_spec.statusBadge)
     {
-        if (m_attention || m_state == "error") p.badge = QStringLiteral("!");
-        else if (m_state == "think") p.badge = QStringLiteral("···");
-        else if (m_state == "sleep") p.badge = QStringLiteral("Zzz");
+        const QString badgeState = m_badgeState.isEmpty() ? m_state : m_badgeState;
+        if (m_attention || badgeState == QStringLiteral("error")) p.badge = QStringLiteral("!");
+        else if (badgeState == QStringLiteral("think")) p.badge = QStringLiteral("···");
+        else if (badgeState == QStringLiteral("sleep")) p.badge = QStringLiteral("Zzz");
     }
     return p;
 }

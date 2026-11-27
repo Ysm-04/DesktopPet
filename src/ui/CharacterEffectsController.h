@@ -20,6 +20,7 @@ public:
     explicit CharacterEffectsController(QObject *parent = nullptr);
     void configure(const CharacterEffectSpec &spec, bool enabled, bool lowPower);
     void setState(const QString &state);
+    void setBadgeState(const QString &state);
     void setPresented(bool presented);
     void dragTo(double globalX);
     void endDrag();
@@ -39,6 +40,7 @@ private:
     QTimer m_timer;
     QElapsedTimer m_clock;
     QString m_state;
+    QString m_badgeState;
     bool m_enabled = false, m_presented = false, m_lowPower = false, m_attention = false;
     bool m_dragging = false, m_haveDragPosition = false, m_closed = false;
     double m_lastX = 0, m_angle = 0;

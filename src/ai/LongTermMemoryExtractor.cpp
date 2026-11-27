@@ -106,6 +106,37 @@ bool isVaguePlaceholderMemory(const QString &content)
     return VaguePattern.match(content.trimmed()).hasMatch();
 }
 
+QString sanitizeOrRejectPersonaBoundMemory(QString content)
+{
+    static const QRegularExpression ParentheticalRolePattern(QStringLiteral(
+        "[（(]\\s*(?:助手|桌宠|AI)?\\s*(?:当前|目前|正在)?\\s*(?:扮演|饰演|角色为|设定为)[^）)]{1,40}[）)]"));
+    content.remove(ParentheticalRolePattern);
+    content = LongTermMemoryStore::sanitizeContent(content);
+    if (content.isEmpty())
+    {
+        return {};
+    }
+
+    static const QRegularExpression AssistantPersonaPattern(QStringLiteral(
+        "^(?:当前|目前)?\\s*(?:桌面宠物|桌宠|AI助手|AI|助手)\\s*(?:目前|现在|正在|一直)?\\s*"
+        "(?:扮演|饰演|人设为|人设是|角色为|角色是|自称|名叫|是)"));
+    if (AssistantPersonaPattern.match(content).hasMatch())
+    {
+        return {};
+    }
+
+    static const QRegularExpression RoleBoundHonorificPattern(QStringLiteral(
+        "(?:用户)?(?:接受|要求|习惯)?\\s*(?:助手|桌宠|AI)?\\s*(?:以|用)?\\s*[「\"“]?老师[」\"”]?\\s*称呼(?:用户|自己)"));
+    if (RoleBoundHonorificPattern.match(content).hasMatch()
+        && !content.contains(QStringLiteral("备选称呼"))
+        && !content.contains(QStringLiteral("自称")))
+    {
+        return {};
+    }
+
+    return content;
+}
+
 QString stripWebCitationFooter(QString text)
 {
     const int citationHeaderIndex = text.indexOf(QStringLiteral("\n\n**来源：**"));
@@ -337,7 +368,7 @@ QVector<ExtractedMemoryCandidate> parseExtractionResponseInternal(
     QSet<QString> seenKeys;
     for (const QJsonObject &object : rawObjects)
     {
-        const QString content = LongTermMemoryStore::sanitizeContent(
+        const QString content = sanitizeOrRejectPersonaBoundMemory(
             object.value(QStringLiteral("content")).toString());
         if (content.size() < MinExtractedContentChars)
         {
@@ -709,6 +740,7 @@ ChatRequest LongTermMemoryExtractor::buildExtractionRequest(
         "- 提取准则：\n"
         "  - 每条记忆必须自包含、指代明确，写出具体项目名或具体事项，严禁只写“这个项目”“该框架”等悬空代词；\n"
         "  - 如果用户在对话中明确说明某项目是自己维护/开发的，或要求总结记住前文项目要点，应提取为用户自身的 project 记忆；\n"
+        "  - 严禁提取桌面宠物/AI助手自身的角色设定、扮演身份、角色名字（如“助手扮演砂狼白子”“助手是Gemini”）、口头禅，或仅针对特定扮演角色的称呼绑定（如因角色设定称呼用户“老师”）；只记录属于用户本人的真实名字/自称、职业身份、偏好、项目与事实；\n"
         "  - 严禁提取与用户无关的通用百科问答、寒暄、临时天气或提醒；\n"
         "  - 严禁提取任何 API Key、Token、密码、口令或账号凭证。\n"
         "- 请直接输出严格 JSON 数组，不要输出任何解释或代码块以外的文字。\n"
@@ -747,6 +779,7 @@ ChatRequest LongTermMemoryExtractor::buildExplicitContextExtractionRequest(
         "请根据下方提供的【近期对话上下文】和【用户记忆指令】，把用户要求记住的目标（例如用户维护或开发的项目名称、技术栈、核心定位与进展，或用户刚才提到的个人偏好、身份与重要事实）提炼为 1～3 条清晰、自包含的长期记忆：\n"
         "- 类别取值：profile（个人画像）、preference（偏好习惯）、project（项目背景）、fact（重要事实）；\n"
         "- 每条 content 必须写出具体的项目名/框架名/事实全称（例如“用户正在开发基于 C++17 与 Qt6 的桌面宠物项目 QtDesktopPet”），严禁只写“这个项目”“该框架”等无具体含义的代词；\n"
+        "- 严禁提取桌面宠物/AI助手自身的角色设定、扮演身份、角色名字或角色绑定称呼，只提炼用户本人的身份、偏好、项目与事实；\n"
         "- 严禁包含任何 API Key、Token、密码等敏感凭据；\n"
         "- 请只输出严格 JSON 数组，格式：[{\"category\":\"profile|preference|project|fact\",\"content\":\"简短第三人称陈述（不超过80字）\"}]。");
 

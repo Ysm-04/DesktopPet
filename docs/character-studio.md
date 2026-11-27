@@ -4,7 +4,7 @@
 
 ## 下载、解压和启动
 
-1. 在版本发布页面另外下载 `QtDesktopPet-CharacterStudio-0.3.0-windows-x64.zip`。普通桌宠安装包不包含工坊和作者编码器。
+1. 在版本发布页面另外下载 `QtDesktopPet-CharacterStudio-0.3.1-windows-x64.zip`。普通桌宠安装包不包含工坊和作者编码器。
 2. 将作者包完整解压到固定目录，再双击 `QtDesktopPetCharacterStudio.exe`。不要从压缩包内部运行，也不要只复制 EXE。
 3. 保留同目录的 DLL、Qt 插件、`encoder/`、许可证及源码材料。作者包已自带 Qt、Windows C++ 运行库、固定 FFmpeg/ffprobe，用户无需安装 Python、Node、FFmpeg 或 Qt。
 

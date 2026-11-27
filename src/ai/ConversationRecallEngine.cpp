@@ -300,8 +300,32 @@ QVector<IndexedExchange> buildEarlyExchanges(
     return exchanges;
 }
 
+QString stripTrailingWebNotice(QString text)
+{
+    static const QStringList notices = {
+        QStringLiteral("（模型未使用联网来源）"),
+        QStringLiteral("（模型使用了联网能力，但未返回可展示来源）"),
+    };
+    bool stripped = true;
+    while (stripped)
+    {
+        stripped = false;
+        text = text.trimmed();
+        for (const QString &notice : notices)
+        {
+            if (text.endsWith(notice))
+            {
+                text.chop(notice.size());
+                stripped = true;
+            }
+        }
+    }
+    return text.trimmed();
+}
+
 QString clippedExcerpt(QString text, int maxChars)
 {
+    text = stripTrailingWebNotice(std::move(text));
     text.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
     text = text.trimmed();
     if (maxChars <= 0 || text.size() <= maxChars)
@@ -471,7 +495,7 @@ QString formatRecalledContextBlock(
 
     const int maxTotalChars = qMax(80, options.maxTotalChars);
     const int maxExcerptChars = qBound(20, options.maxExcerptChars, 1000);
-    const QString header = QStringLiteral("[本地历史对话参考（按需检索，仅作背景参考）]");
+    const QString header = QStringLiteral("[本地历史对话参考（按需检索，可能来自其他桌面角色时期；仅参考客观事实，勿模仿旧角色身份与称呼）]");
     QString result = header;
     int lineNumber = 0;
 
@@ -491,7 +515,7 @@ QString formatRecalledContextBlock(
             continue;
         }
 
-        const QString line = QStringLiteral("\n%1. [%2] 用户：%3 | 助手：%4")
+        const QString line = QStringLiteral("\n%1. [%2] 用户：%3 | 历史回复：%4")
             .arg(++lineNumber)
             .arg(dateLabel, userExcerpt, assistantExcerpt);
 

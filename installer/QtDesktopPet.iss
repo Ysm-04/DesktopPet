@@ -1,9 +1,9 @@
 #define AppName "QtDesktopPet"
 #ifndef AppVersion
-#define AppVersion "0.3.0"
+#define AppVersion "0.3.1"
 #endif
 #ifndef SourceDir
-#define SourceDir "..\dist\QtDesktopPet-0.3.0-windows-x64"
+#define SourceDir "..\dist\QtDesktopPet-0.3.1-windows-x64"
 #endif
 #ifndef OutputDir
 #define OutputDir "..\dist\installer"

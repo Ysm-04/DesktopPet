@@ -35,6 +35,8 @@ public:
     void setLongTermMemoryEnabled(bool enabled);
     void setLongTermMemoryLoader(LongTermMemoryLoader loader);
     void setConversationMetadata(const QString &provider, const QString &model);
+    void setCurrentCharacterId(const QString &characterId);
+    QString currentCharacterId() const;
     void setCharacterPersona(const QString &persona);
     QString characterPersona() const;
     QString effectiveSystemPrompt() const;
@@ -58,6 +60,7 @@ private:
     ArchiveHistoryLoader m_archiveHistoryLoader;
     LongTermMemoryLoader m_longTermMemoryLoader;
     QString m_characterPersona;
+    QString m_currentCharacterId = QStringLiteral("shiroko");
     QString m_currentProvider;
     QString m_currentModel;
     int m_maxRequestContextMessages = 12;

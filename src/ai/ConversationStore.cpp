@@ -37,6 +37,10 @@ QJsonObject objectFromMessage(const ChatMessage &message)
     {
         object.insert(QStringLiteral("model"), message.model.trimmed());
     }
+    if (!message.characterId.trimmed().isEmpty())
+    {
+        object.insert(QStringLiteral("characterId"), message.characterId.trimmed());
+    }
     return object;
 }
 
@@ -57,7 +61,8 @@ ChatMessage messageFromObject(const QJsonObject &object)
         object.value(QStringLiteral("content")).toString(),
         timestamp,
         object.value(QStringLiteral("provider")).toString().trimmed(),
-        object.value(QStringLiteral("model")).toString().trimmed()
+        object.value(QStringLiteral("model")).toString().trimmed(),
+        object.value(QStringLiteral("characterId")).toString().trimmed()
     };
 }
 
@@ -70,7 +75,7 @@ bool sameMessage(const ChatMessage &left, const ChatMessage &right)
 
     if (left.timestamp.isValid() && right.timestamp.isValid())
     {
-        return left.timestamp == right.timestamp;
+        return left.timestamp.toSecsSinceEpoch() == right.timestamp.toSecsSinceEpoch();
     }
 
     return true;

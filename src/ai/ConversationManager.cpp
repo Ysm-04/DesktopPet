@@ -5,12 +5,57 @@
 #include "../character/CharacterPersonaStore.h"
 
 #include <QDateTime>
+#include <QRegularExpression>
 #include <QtGlobal>
 
+#include <limits>
 #include <utility>
 
 namespace
 {
+QString normalizedCharacterId(const QString &characterId)
+{
+    const QString trimmed = characterId.trimmed();
+    return trimmed.isEmpty() ? QStringLiteral("shiroko") : trimmed;
+}
+
+QString stripTrailingWebStatusLines(QString text)
+{
+    static const QStringList suffixes = {
+        QStringLiteral("（模型未使用联网来源）"),
+        QStringLiteral("（模型使用了联网能力，但未返回可展示来源）"),
+    };
+    bool stripped = true;
+    while (stripped)
+    {
+        stripped = false;
+        text = text.trimmed();
+        for (const QString &suffix : suffixes)
+        {
+            if (text.endsWith(suffix))
+            {
+                text.chop(suffix.size());
+                stripped = true;
+            }
+        }
+    }
+    return text.trimmed();
+}
+
+QString clippedSingleLine(QString text, int maxChars)
+{
+    text = stripTrailingWebStatusLines(std::move(text));
+    text.replace(QRegularExpression(QStringLiteral("\\s+")), QStringLiteral(" "));
+    text = text.trimmed();
+    if (maxChars <= 0 || text.size() <= maxChars)
+    {
+        return text;
+    }
+
+    const int cut = qMax(16, maxChars - 3);
+    return text.left(cut).trimmed() + QStringLiteral("...");
+}
+
 bool sameArchiveMessage(const ChatMessage &left, const ChatMessage &right)
 {
     if (left.role != right.role || left.content != right.content)
@@ -20,7 +65,7 @@ bool sameArchiveMessage(const ChatMessage &left, const ChatMessage &right)
 
     if (left.timestamp.isValid() && right.timestamp.isValid())
     {
-        return left.timestamp == right.timestamp;
+        return left.timestamp.toSecsSinceEpoch() == right.timestamp.toSecsSinceEpoch();
     }
 
     return true;
@@ -114,7 +159,8 @@ QString ConversationManager::fixedCapabilityPrompt()
         "- 如果当次请求中附带了本应用保存的 `[用户长期记忆]`，请在相关时自然运用其中的用户背景与偏好，不要生硬复述。\n"
         "- 如果当次请求中附带了本应用检索出的 `[本地历史对话参考]`，可以自然结合其中的早期记录回答用户回顾。\n"
         "- 如果用户询问最新信息但没有开启联网，提醒用户打开“联网”开关；如果当前 AI 配置不支持联网，说明无法使用联网模式。\n"
-        "- 不要声称已经访问电脑本地文件、启动应用或执行系统操作，也不要编造任何未发生的操作结果。");
+        "- 不要声称已经访问电脑本地文件、启动应用或执行系统操作，也不要编造任何未发生的操作结果。\n"
+        "- 身份一致性最高准则：必须始终以当前角色设定作为唯一身份与说话语气；若 `[用户长期记忆]`、`[切换角色前的近期对话背景]` 或 `[本地历史对话参考]` 中出现其他角色的名字、口癖或特定角色绑定称呼，一律忽略该旧角色身份与绑定称呼，严禁自称其他角色，也严禁声称自己是“本体套着其他角色的皮”。");
 }
 
 ConversationManager::~ConversationManager()
@@ -221,6 +267,16 @@ void ConversationManager::setConversationMetadata(const QString &provider, const
     m_currentModel = model.trimmed();
 }
 
+void ConversationManager::setCurrentCharacterId(const QString &characterId)
+{
+    m_currentCharacterId = normalizedCharacterId(characterId);
+}
+
+QString ConversationManager::currentCharacterId() const
+{
+    return m_currentCharacterId;
+}
+
 void ConversationManager::setCharacterPersona(const QString &persona)
 {
     m_characterPersona = CharacterPersonaStore::sanitizePersona(persona);
@@ -264,7 +320,13 @@ ChatRequest ConversationManager::buildRequestForUserMessage(const QString &messa
         return {};
     }
 
-    const ChatMessage userMessage{QStringLiteral("user"), content, QDateTime::currentDateTime(), m_currentProvider, m_currentModel};
+    const ChatMessage userMessage{
+        QStringLiteral("user"),
+        content,
+        QDateTime::currentDateTime(),
+        m_currentProvider,
+        m_currentModel,
+        normalizedCharacterId(m_currentCharacterId)};
     return buildRequest(userMessage);
 }
 
@@ -277,8 +339,9 @@ void ConversationManager::appendExternalExchange(const QString &userMessage, con
         return;
     }
 
-    const ChatMessage user{QStringLiteral("user"), userContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel};
-    const ChatMessage assistant{QStringLiteral("assistant"), assistantContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel};
+    const QString charId = normalizedCharacterId(m_currentCharacterId);
+    const ChatMessage user{QStringLiteral("user"), userContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel, charId};
+    const ChatMessage assistant{QStringLiteral("assistant"), assistantContent, QDateTime::currentDateTime(), m_currentProvider, m_currentModel, charId};
     appendExchange(user, assistant);
 }
 
@@ -313,14 +376,21 @@ void ConversationManager::sendUserMessageStreaming(const QString &message, Strea
     }
 
     const QDateTime timestamp = QDateTime::currentDateTime();
-    const ChatMessage userMessage{QStringLiteral("user"), content, timestamp, m_currentProvider, m_currentModel};
+    const QString charId = normalizedCharacterId(m_currentCharacterId);
+    const ChatMessage userMessage{QStringLiteral("user"), content, timestamp, m_currentProvider, m_currentModel, charId};
     m_provider->sendStreamingChatRequest(
         buildRequest(userMessage),
         std::move(streamCallback),
         [this, userMessage, callback = std::move(callback)](const ChatResponse &response) mutable {
             if (response.success)
             {
-                ChatMessage assistantMessage{QStringLiteral("assistant"), response.content, QDateTime::currentDateTime(), userMessage.provider, userMessage.model};
+                ChatMessage assistantMessage{
+                    QStringLiteral("assistant"),
+                    response.content,
+                    QDateTime::currentDateTime(),
+                    userMessage.provider,
+                    userMessage.model,
+                    userMessage.characterId};
                 appendExchange(userMessage, assistantMessage);
             }
 
@@ -355,35 +425,134 @@ ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) co
     const QVector<ChatMessage> archivePool = fullHistory();
     const int poolSize = static_cast<int>(archivePool.size());
     const int historyCharBudget = qMax(400, m_requestContextMaxChars);
+    const QString activeCharId = normalizedCharacterId(m_currentCharacterId);
 
-    int earliestAllowedIndex = poolSize;
+    int maxPairs = 0;
     if (m_requestContextUseMax)
     {
-        earliestAllowedIndex = 0;
+        maxPairs = std::numeric_limits<int>::max();
     }
     else if (m_maxRequestContextMessages > 0)
     {
         const int desiredCount = m_maxRequestContextMessages == 1
             ? 2
             : (m_maxRequestContextMessages - (m_maxRequestContextMessages % 2));
-        earliestAllowedIndex = qMax(0, poolSize - desiredCount);
+        maxPairs = desiredCount / 2;
     }
 
-    int startIndex = poolSize;
-    int accumulatedChars = 0;
-    for (int index = poolSize - 2; index >= earliestAllowedIndex; index -= 2)
+    struct MessagePair
     {
-        const int pairChars = archivePool.at(index).content.size()
-            + archivePool.at(index + 1).content.size();
-        if (startIndex < poolSize && accumulatedChars + pairChars > historyCharBudget)
+        ChatMessage user;
+        ChatMessage assistant;
+    };
+    QVector<MessagePair> reversedSameCharPairs;
+    int accumulatedChars = 0;
+    int trailingSameCharWindow = 0;
+    bool stillTrailing = true;
+
+    for (int index = poolSize - 2; index >= 0 && reversedSameCharPairs.size() < maxPairs;)
+    {
+        const ChatMessage &first = archivePool.at(index);
+        const ChatMessage &second = archivePool.at(index + 1);
+        if (first.role != QStringLiteral("user") || second.role != QStringLiteral("assistant"))
         {
-            break;
+            stillTrailing = false;
+            --index;
+            continue;
         }
-        accumulatedChars += pairChars;
-        startIndex = index;
+
+        const bool sameCharacter = normalizedCharacterId(first.characterId) == activeCharId
+            && normalizedCharacterId(second.characterId) == activeCharId;
+        if (sameCharacter)
+        {
+            ChatMessage cleanedAssistant = second;
+            cleanedAssistant.content = stripTrailingWebStatusLines(cleanedAssistant.content);
+            const int pairChars = first.content.size() + cleanedAssistant.content.size();
+            if (!reversedSameCharPairs.isEmpty() && accumulatedChars + pairChars > historyCharBudget)
+            {
+                break;
+            }
+            accumulatedChars += pairChars;
+            reversedSameCharPairs.append({first, cleanedAssistant});
+            if (stillTrailing)
+            {
+                trailingSameCharWindow += 2;
+            }
+        }
+        else
+        {
+            stillTrailing = false;
+        }
+        index -= 2;
     }
 
-    const int includedRecentCount = poolSize - startIndex;
+    QString priorRoleBackgroundBlock;
+    if (maxPairs > 0 && poolSize >= 2)
+    {
+        const int tailStart = qMax(0, poolSize - 12);
+        QVector<MessagePair> reversedPriorPairs;
+        for (int index = poolSize - 2; index >= tailStart && reversedPriorPairs.size() < 4;)
+        {
+            const ChatMessage &first = archivePool.at(index);
+            const ChatMessage &second = archivePool.at(index + 1);
+            if (first.role != QStringLiteral("user") || second.role != QStringLiteral("assistant"))
+            {
+                --index;
+                continue;
+            }
+
+            const bool sameCharacter = normalizedCharacterId(first.characterId) == activeCharId
+                && normalizedCharacterId(second.characterId) == activeCharId;
+            if (!sameCharacter && !first.content.trimmed().isEmpty() && !second.content.trimmed().isEmpty())
+            {
+                reversedPriorPairs.append({first, second});
+            }
+            index -= 2;
+        }
+
+        if (!reversedPriorPairs.isEmpty())
+        {
+            const QString header = QStringLiteral(
+                "[切换角色前的近期对话背景（由先前的其他桌面角色与用户交流，仅供延续未完话题的客观事实参考；"
+                "请严格保持当前角色人设的身份与语气，严禁沿用先前角色的名字、自称、口吻或角色专属称呼，"
+                "也不要提及切换角色或套皮扮演）]");
+            QString block = header;
+            int lineNumber = 0;
+            constexpr int MaxPriorBlockChars = 1400;
+            for (int i = reversedPriorPairs.size() - 1; i >= 0; --i)
+            {
+                const MessagePair &pair = reversedPriorPairs.at(i);
+                const QString userExcerpt = clippedSingleLine(pair.user.content, 240);
+                const QString assistantExcerpt = clippedSingleLine(pair.assistant.content, 240);
+                if (userExcerpt.isEmpty() && assistantExcerpt.isEmpty())
+                {
+                    continue;
+                }
+
+                const QString line = QStringLiteral("\n%1. 用户：%2 | 先前回复摘要：%3")
+                    .arg(++lineNumber)
+                    .arg(userExcerpt, assistantExcerpt);
+                if (block.size() + line.size() > MaxPriorBlockChars)
+                {
+                    if (lineNumber == 1)
+                    {
+                        const int available = MaxPriorBlockChars - block.size();
+                        if (available > 32)
+                        {
+                            block += line.left(available - 3) + QStringLiteral("...");
+                        }
+                    }
+                    break;
+                }
+                block += line;
+            }
+            if (block.size() > header.size())
+            {
+                priorRoleBackgroundBlock = block;
+            }
+        }
+    }
+
     QString systemText = effectiveSystemPrompt().trimmed();
     if (m_longTermMemoryEnabled && m_longTermMemoryLoader)
     {
@@ -397,13 +566,21 @@ ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) co
             systemText += memoryBlock;
         }
     }
-    if (m_historyRecallEnabled && poolSize > includedRecentCount)
+    if (!priorRoleBackgroundBlock.isEmpty())
+    {
+        if (!systemText.isEmpty())
+        {
+            systemText += QStringLiteral("\n\n");
+        }
+        systemText += priorRoleBackgroundBlock;
+    }
+    if (m_historyRecallEnabled && poolSize > trailingSameCharWindow)
     {
         const QVector<ConversationRecallEngine::RecalledExchange> recalled =
             ConversationRecallEngine::recallRelevantExchanges(
                 userMessage.content,
                 archivePool,
-                includedRecentCount);
+                trailingSameCharWindow);
         const QString recalledBlock = ConversationRecallEngine::formatRecalledContextBlock(recalled);
         if (!recalledBlock.isEmpty())
         {
@@ -421,9 +598,11 @@ ChatRequest ConversationManager::buildRequest(const ChatMessage &userMessage) co
         request.messages.append(ChatMessage{QStringLiteral("system"), systemText});
     }
 
-    for (int index = startIndex; index < poolSize; ++index)
+    for (int i = reversedSameCharPairs.size() - 1; i >= 0; --i)
     {
-        request.messages.append(archivePool.at(index));
+        const MessagePair &pair = reversedSameCharPairs.at(i);
+        request.messages.append(pair.user);
+        request.messages.append(pair.assistant);
     }
     request.messages.append(userMessage);
     return request;
